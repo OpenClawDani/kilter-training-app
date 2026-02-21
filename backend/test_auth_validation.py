@@ -135,7 +135,7 @@ class TestDatabaseModels:
 
     def test_user_model_creation(self):
         """Test User model instantiation"""
-        user_id = uuid.uuid4()
+        user_id = str(uuid.uuid4())
         user = User(
             id=user_id,
             email="test@example.com",
@@ -172,37 +172,38 @@ class TestDatabaseModels:
 
     def test_video_upload_model_creation(self):
         """Test VideoUpload model instantiation"""
-        user_id = uuid.uuid4()
-        video_id = uuid.uuid4()
+        user_id = str(uuid.uuid4())
+        video_id = str(uuid.uuid4())
         video = VideoUpload(
             id=video_id,
             user_id=user_id,
-            file_path="/uploads/video.mp4",
+            original_file_path="/uploads/video.mp4",
             status="pending"
         )
         assert video.id == video_id
         assert video.user_id == user_id
-        assert video.file_path == "/uploads/video.mp4"
+        assert video.original_file_path == "/uploads/video.mp4"
         assert video.status == "pending"
 
     def test_video_upload_model_defaults(self):
         """Test VideoUpload model with default values"""
-        user_id = uuid.uuid4()
+        user_id = str(uuid.uuid4())
         video = VideoUpload(
             user_id=user_id,
-            file_path="/uploads/video.mp4"
+            original_file_path="/uploads/video.mp4"
         )
         assert video.status == "pending"
-        assert video.detected_holds is None
-        assert video.confidence is None
+        assert video.form_feedback is None
+        assert video.grade_estimate is None
+        assert video.body_position is None
 
     def test_video_upload_repr(self):
         """Test VideoUpload model __repr__ method"""
-        video_id = uuid.uuid4()
+        video_id = str(uuid.uuid4())
         video = VideoUpload(
             id=video_id,
-            user_id=uuid.uuid4(),
-            file_path="/path",
+            user_id=str(uuid.uuid4()),
+            original_file_path="/path",
             status="processing"
         )
         assert f"{video_id} - processing" in str(video)

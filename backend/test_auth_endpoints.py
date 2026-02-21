@@ -25,12 +25,10 @@ engine = create_engine(
     echo=False
 )
 
-# Create tables - this may fail for UUID, but we'll handle it
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    # SQLite doesn't support UUID, we'll skip table creation
-    pass
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 
 def override_get_db():
@@ -326,11 +324,11 @@ class TestModels:
         """Test VideoUpload model creation"""
         from app.models.video import VideoUpload
         video = VideoUpload(
-            user_id=uuid.uuid4(),
-            file_path="/uploads/video.mp4",
+            user_id=str(uuid.uuid4()),
+            original_file_path="/uploads/video.mp4",
             status="pending"
         )
-        assert video.file_path == "/uploads/video.mp4"
+        assert video.original_file_path == "/uploads/video.mp4"
         assert video.status == "pending"
 
 

@@ -9,7 +9,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '001'
@@ -22,7 +21,7 @@ def upgrade() -> None:
     # Create users table
     op.create_table(
         'users',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', sa.String(36), nullable=False),
         sa.Column('email', sa.String(), nullable=False),
         sa.Column('username', sa.String(), nullable=False),
         sa.Column('hashed_password', sa.String(), nullable=False),
@@ -40,8 +39,8 @@ def upgrade() -> None:
     # Create video_uploads table
     op.create_table(
         'video_uploads',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', sa.String(36), nullable=False),
+        sa.Column('user_id', sa.String(36), nullable=False),
         sa.Column('file_path', sa.String(), nullable=False),
         sa.Column('status', sa.String(), nullable=False, server_default='pending'),
         sa.Column('detected_holds', sa.JSON(), nullable=True),
