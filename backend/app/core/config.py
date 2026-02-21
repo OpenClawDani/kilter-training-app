@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     environment: str = "development"
+    gemini_api_key: str = ""
+    upload_dir: str = "uploads"
+    max_file_size_mb: int = 500
 
     class Config:
         env_file = ".env"
