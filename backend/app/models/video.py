@@ -36,5 +36,9 @@ class VideoUpload(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("status", "pending")
+        super().__init__(**kwargs)
+
     def __repr__(self):
         return f"<VideoUpload {self.id} - {self.status}>"

@@ -1,4 +1,5 @@
 import json
+import time
 import google.generativeai as genai
 from app.core.config import get_settings
 
@@ -21,6 +22,10 @@ Return ONLY valid JSON with these exact keys:
 
 _configured = False
 
+# Max time to wait for Gemini to process a video file (seconds)
+FILE_PROCESSING_TIMEOUT = 300
+FILE_PROCESSING_POLL_INTERVAL = 2
+
 
 def _ensure_configured():
     global _configured
@@ -32,18 +37,35 @@ def _ensure_configured():
 
 async def analyze_climbing_form(video_path: str) -> dict:
     """
-    Sends video to Gemini Vision for climbing form analysis.
+    Sends video to Gemini Vision for climbing form analysis using the File API.
+    Uploads the entire video once, waits for processing, then makes a single
+    generate_content call. NO frame-by-frame extraction.
+
     Returns parsed dict matching AnalysisResponse schema.
     """
     _ensure_configured()
 
+    # Step 1: Upload entire video to Gemini File API (one upload)
+    video_file = genai.upload_file(path=video_path)
+
+    # Step 2: Wait for Gemini to finish processing the video
+    elapsed = 0
+    while video_file.state.name == "PROCESSING":
+        if elapsed >= FILE_PROCESSING_TIMEOUT:
+            raise TimeoutError(
+                f"Gemini file processing timed out after {FILE_PROCESSING_TIMEOUT}s"
+            )
+        time.sleep(FILE_PROCESSING_POLL_INTERVAL)
+        elapsed += FILE_PROCESSING_POLL_INTERVAL
+        video_file = genai.get_file(video_file.name)
+
+    if video_file.state.name == "FAILED":
+        raise RuntimeError("Gemini file processing failed")
+
+    # Step 3: Single API call — Gemini analyzes the full video internally
     model = genai.GenerativeModel("gemini-2.0-flash")
-
-    # Upload video file to Gemini
-    video_file = genai.upload_file(video_path)
-
     response = model.generate_content(
-        [CLIMBING_ANALYSIS_PROMPT, video_file],
+        [video_file, CLIMBING_ANALYSIS_PROMPT],
         generation_config=genai.types.GenerationConfig(
             temperature=0.3,
             response_mime_type="application/json",
@@ -52,13 +74,11 @@ async def analyze_climbing_form(video_path: str) -> dict:
 
     # Parse JSON response
     text = response.text.strip()
-    # Handle potential markdown code block wrapping
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
     result = json.loads(text)
 
-    # Ensure required keys exist with defaults
     return {
         "form_feedback": result.get("form_feedback", "Analysis completed"),
         "grade_estimate": result.get("grade_estimate"),

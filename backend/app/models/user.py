@@ -16,5 +16,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("is_active", True)
+        super().__init__(**kwargs)
+
     def __repr__(self):
         return f"<User {self.email}>"

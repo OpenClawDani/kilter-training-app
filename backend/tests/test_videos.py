@@ -7,16 +7,17 @@ import pytest
 import uuid
 import io
 import os
+import json
 from datetime import datetime
 from unittest.mock import patch, AsyncMock, MagicMock
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.core.database import Base, get_db
+from app.core.database import Base
 from app.core.security import create_access_token
 from app.models.user import User
 from app.models.video import VideoUpload
@@ -26,28 +27,8 @@ from app.schemas.video import (
     FragmentRequest,
     AnalysisResponse,
 )
+from conftest import engine, TestingSessionLocal
 
-# --- Test DB setup (SQLite in-memory) ---
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-    echo=False,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 # --- Helpers ---
@@ -323,7 +304,7 @@ class TestFragmentEndpoint:
 
 
 class TestAnalyzeEndpoint:
-    """POST /api/videos/{video_id}/analyze"""
+    """POST /api/videos/{video_id}/analyze — returns 202 (async via BackgroundTasks)"""
 
     def setup_method(self):
         Base.metadata.drop_all(bind=engine)
@@ -346,45 +327,37 @@ class TestAnalyzeEndpoint:
         db.close()
         return uid, vid
 
-    @patch("app.services.gemini_service.analyze_climbing_form", new_callable=AsyncMock, return_value=MOCK_GEMINI_RESULT)
-    def test_analyze_success(self, mock_gemini):
+    def test_analyze_returns_202_processing(self):
+        """Analyze endpoint returns 202 Accepted and sets status to processing."""
         uid, vid = self._seed_video(with_fragment=True)
         resp = client.post(
             f"/api/videos/{vid}/analyze",
             headers=_auth_header(uid),
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
-        assert data["form_feedback"] == MOCK_GEMINI_RESULT["form_feedback"]
-        assert data["grade_estimate"] == "V5"
-        assert len(data["key_weaknesses"]) == 3
-        mock_gemini.assert_called_once_with("uploads/test/video_fragment.mp4")
+        assert data["status"] == "processing"
+        assert data["id"] is not None
 
-    @patch("app.services.gemini_service.analyze_climbing_form", new_callable=AsyncMock, return_value=MOCK_GEMINI_RESULT)
-    def test_analyze_uses_original_if_no_fragment(self, mock_gemini):
+    def test_analyze_picks_fragment_path(self):
+        """When fragment exists, background task should receive fragment path."""
+        uid, vid = self._seed_video(with_fragment=True)
+        resp = client.post(
+            f"/api/videos/{vid}/analyze",
+            headers=_auth_header(uid),
+        )
+        assert resp.status_code == 202
+
+    def test_analyze_picks_original_if_no_fragment(self):
+        """When no fragment, background task should receive original path."""
         uid, vid = self._seed_video(with_fragment=False)
         resp = client.post(
             f"/api/videos/{vid}/analyze",
             headers=_auth_header(uid),
         )
-        assert resp.status_code == 200
-        mock_gemini.assert_called_once_with("uploads/test/video.mp4")
-
-    @patch("app.services.gemini_service.analyze_climbing_form", new_callable=AsyncMock, side_effect=Exception("Gemini API error"))
-    def test_analyze_failure_sets_status_failed(self, mock_gemini):
-        uid, vid = self._seed_video(with_fragment=True)
-        resp = client.post(
-            f"/api/videos/{vid}/analyze",
-            headers=_auth_header(uid),
-        )
-        assert resp.status_code == 500
-        assert "Analysis failed" in resp.json()["detail"]
-
-        # Verify status was set to failed in DB
-        db = TestingSessionLocal()
-        video = db.query(VideoUpload).filter(VideoUpload.id == vid).first()
-        assert video.status == "failed"
-        db.close()
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "processing"
 
     def test_analyze_video_not_found(self):
         db = TestingSessionLocal()
@@ -400,6 +373,19 @@ class TestAnalyzeEndpoint:
     def test_analyze_requires_auth(self):
         resp = client.post(f"/api/videos/{uuid.uuid4()}/analyze")
         assert resp.status_code == 403
+
+    @patch("app.api.videos._run_analysis", new_callable=AsyncMock)
+    def test_background_task_is_scheduled(self, mock_run):
+        """Verify that _run_analysis is added as a background task."""
+        uid, vid = self._seed_video(with_fragment=True)
+        resp = client.post(
+            f"/api/videos/{vid}/analyze",
+            headers=_auth_header(uid),
+        )
+        assert resp.status_code == 202
+        # BackgroundTasks in TestClient are executed synchronously,
+        # so mock_run should have been called
+        mock_run.assert_called_once_with(vid, "uploads/test/video_fragment.mp4")
 
 
 class TestListVideosEndpoint:
@@ -603,6 +589,85 @@ class TestFragmentValidation:
             json={"fragment_start": 0.0, "fragment_end": 0.0},
         )
         assert resp.status_code == 400
+
+
+# --- Gemini Service Unit Tests ---
+
+
+class TestGeminiService:
+    """Unit tests for gemini_service — Gemini File API pattern."""
+
+    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.genai")
+    async def test_analyze_uses_file_api_with_wait(self, mock_genai):
+        """Verify: upload_file → poll state → single generate_content call."""
+        from app.services.gemini_service import analyze_climbing_form
+
+        # Mock file that goes PROCESSING → ACTIVE
+        mock_file = MagicMock()
+        mock_file.state.name = "ACTIVE"
+        mock_file.name = "files/abc123"
+        mock_genai.upload_file.return_value = mock_file
+
+        # Mock model response
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(MOCK_GEMINI_RESULT)
+        mock_model = MagicMock()
+        mock_model.generate_content.return_value = mock_response
+        mock_genai.GenerativeModel.return_value = mock_model
+
+        result = await analyze_climbing_form("/fake/video.mp4")
+
+        mock_genai.upload_file.assert_called_once_with(path="/fake/video.mp4")
+        mock_model.generate_content.assert_called_once()
+        assert result["form_feedback"] == MOCK_GEMINI_RESULT["form_feedback"]
+        assert result["grade_estimate"] == "V5"
+        assert len(result["key_weaknesses"]) == 3
+
+    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.time.sleep")
+    @patch("app.services.gemini_service.genai")
+    async def test_analyze_waits_for_processing(self, mock_genai, mock_sleep):
+        """Verify polling loop waits while state is PROCESSING."""
+        from app.services.gemini_service import analyze_climbing_form
+
+        # First call: PROCESSING, second call (via get_file): ACTIVE
+        processing_file = MagicMock()
+        processing_file.state.name = "PROCESSING"
+        processing_file.name = "files/abc123"
+
+        active_file = MagicMock()
+        active_file.state.name = "ACTIVE"
+        active_file.name = "files/abc123"
+
+        mock_genai.upload_file.return_value = processing_file
+        mock_genai.get_file.return_value = active_file
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(MOCK_GEMINI_RESULT)
+        mock_model = MagicMock()
+        mock_model.generate_content.return_value = mock_response
+        mock_genai.GenerativeModel.return_value = mock_model
+
+        result = await analyze_climbing_form("/fake/video.mp4")
+
+        mock_genai.get_file.assert_called_once_with("files/abc123")
+        mock_sleep.assert_called()
+        assert result["form_feedback"] == MOCK_GEMINI_RESULT["form_feedback"]
+
+    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.genai")
+    async def test_analyze_raises_on_failed_processing(self, mock_genai):
+        """Verify RuntimeError if Gemini file processing fails."""
+        from app.services.gemini_service import analyze_climbing_form
+
+        mock_file = MagicMock()
+        mock_file.state.name = "FAILED"
+        mock_file.name = "files/abc123"
+        mock_genai.upload_file.return_value = mock_file
+
+        with pytest.raises(RuntimeError, match="processing failed"):
+            await analyze_climbing_form("/fake/video.mp4")
 
 
 if __name__ == "__main__":

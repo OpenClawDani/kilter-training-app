@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Optional
 import os
 
-from app.core.database import get_db
+from app.core.database import get_db, SessionLocal
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.models.video import VideoUpload
@@ -88,13 +88,47 @@ async def create_fragment(
     return VideoUploadResponse.model_validate(video_record)
 
 
-@router.post("/{video_id}/analyze", response_model=AnalysisResponse)
+async def _run_analysis(video_id: str, analysis_path: str):
+    """Background task: runs Gemini analysis and updates DB record."""
+    db = SessionLocal()
+    try:
+        video_record = db.execute(
+            select(VideoUpload).where(VideoUpload.id == video_id)
+        ).scalars().first()
+        if not video_record:
+            return
+
+        result = await gemini_service.analyze_climbing_form(analysis_path)
+
+        video_record.form_feedback = result["form_feedback"]
+        video_record.grade_estimate = result.get("grade_estimate")
+        video_record.body_position = result.get("body_position")
+        video_record.holds_analysis = result.get("holds_analysis")
+        video_record.key_weaknesses = result.get("key_weaknesses")
+        video_record.status = "completed"
+        db.commit()
+    except Exception:
+        video_record = db.execute(
+            select(VideoUpload).where(VideoUpload.id == video_id)
+        ).scalars().first()
+        if video_record:
+            video_record.status = "failed"
+            db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/{video_id}/analyze", response_model=VideoUploadResponse, status_code=202)
 async def analyze_video(
     video_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Run Gemini Vision analysis on a video (or its fragment)."""
+    """
+    Start Gemini Vision analysis on a video (or its fragment).
+    Returns 202 Accepted immediately — poll GET /api/videos/{id} for results.
+    """
     video_record = db.execute(
         select(VideoUpload).where(
             VideoUpload.id == video_id,
@@ -107,23 +141,13 @@ async def analyze_video(
 
     analysis_path = video_record.fragment_file_path or video_record.original_file_path
 
-    try:
-        result = await gemini_service.analyze_climbing_form(analysis_path)
-    except Exception as e:
-        video_record.status = "failed"
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-
-    video_record.form_feedback = result["form_feedback"]
-    video_record.grade_estimate = result.get("grade_estimate")
-    video_record.body_position = result.get("body_position")
-    video_record.holds_analysis = result.get("holds_analysis")
-    video_record.key_weaknesses = result.get("key_weaknesses")
-    video_record.status = "completed"
+    video_record.status = "processing"
     db.commit()
     db.refresh(video_record)
 
-    return AnalysisResponse(**result)
+    background_tasks.add_task(_run_analysis, video_id, analysis_path)
+
+    return VideoUploadResponse.model_validate(video_record)
 
 
 @router.get("", response_model=list[VideoUploadResponse])
