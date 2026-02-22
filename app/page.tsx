@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 export default function Home() {
   return (
     <div style={{
@@ -12,6 +14,12 @@ export default function Home() {
       padding: '20px',
       position: 'relative'
     }}>
+      {/* Top nav */}
+      <div style={{position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', justifyContent: 'flex-end', padding: '16px 24px', zIndex: 20}}>
+        <Link href="/login" style={{color: '#cbd5e1', fontSize: '14px', fontWeight: 600, textDecoration: 'none', padding: '8px 20px', border: '1px solid rgba(255, 107, 53, 0.4)', borderRadius: '8px', transition: 'all 0.3s ease'}}>
+          Login
+        </Link>
+      </div>
       {/* Background animated elements */}
       <div style={{position: 'absolute', inset: 0, overflow: 'hidden'}}>
         <div style={{position: 'absolute', top: 0, right: 0, width: '400px', height: '400px', background: 'rgba(255, 107, 53, 0.1)', borderRadius: '50%', filter: 'blur(80px)'}}></div>
@@ -45,12 +53,12 @@ export default function Home() {
         </div>
 
         {/* CTA Button - PREMIUM */}
-        <button style={{marginTop: '32px', padding: '16px 32px', background: 'linear-gradient(135deg, #FF6B35, #FF8C42)', color: 'white', fontWeight: 'bold', fontSize: '16px', border: 'none', borderRadius: '8px', boxShadow: '0 20px 40px rgba(255, 107, 53, 0.4)', cursor: 'pointer', transition: 'all 0.3s ease'}}
+        <Link href="/login" style={{marginTop: '32px', padding: '16px 32px', background: 'linear-gradient(135deg, #FF6B35, #FF8C42)', color: 'white', fontWeight: 'bold', fontSize: '16px', border: 'none', borderRadius: '8px', boxShadow: '0 20px 40px rgba(255, 107, 53, 0.4)', cursor: 'pointer', transition: 'all 0.3s ease', textDecoration: 'none', display: 'inline-block'}}
           onMouseOver={(e) => {e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.boxShadow = '0 30px 60px rgba(255, 107, 53, 0.6)'}}
           onMouseOut={(e) => {e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 20px 40px rgba(255, 107, 53, 0.4)'}}
         >
-          Coming Soon 🧗‍♂️
-        </button>
+          Inizia 🧗‍♂️
+        </Link>
 
         {/* Feature cards */}
         <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px', marginTop: '48px', paddingTop: '32px', borderTop: '1px solid rgba(255, 107, 53, 0.2)', width: '100%'}}>
