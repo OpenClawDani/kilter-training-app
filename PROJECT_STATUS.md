@@ -20,7 +20,7 @@
 | VideoUpload model | ✅ Done | Schema aggiornato per Gemini results |
 | Gemini Video Service | ✅ Done | File API implementata, fix frame-by-frame |
 | Video upload endpoint | ✅ Done | POST /api/videos/upload |
-| Frontend upload UI | ⏳ Da fare | Next.js drag-drop |
+| Frontend upload UI | ✅ Done | Drag-drop, progress bar, mobile-first |
 | Training logs | ⏳ Da fare | Phase 2 |
 | Circuit logger (BoardLib) | ⏳ Da fare | Phase 2 — SUPPLEMENTARE |
 | Dashboard | ⏳ Da fare | Phase 3 |
