@@ -17,9 +17,9 @@
 | Backend FastAPI | ✅ Done | Auth JWT funzionante, SQLite |
 | Auth (JWT) | ✅ Done | Register, login, token |
 | User model + migrations | ✅ Done | Alembic setup |
-| VideoUpload model | 🔄 Da aggiornare | Needs schema for Gemini results |
-| Gemini Video Service | ⏳ Da fare | **PROSSIMO STEP** |
-| Video upload endpoint | ⏳ Da fare | POST /api/videos/upload |
+| VideoUpload model | ✅ Done | Schema aggiornato per Gemini results |
+| Gemini Video Service | ✅ Done | File API implementata, fix frame-by-frame |
+| Video upload endpoint | ✅ Done | POST /api/videos/upload |
 | Frontend upload UI | ⏳ Da fare | Next.js drag-drop |
 | Training logs | ⏳ Da fare | Phase 2 |
 | Circuit logger (BoardLib) | ⏳ Da fare | Phase 2 — SUPPLEMENTARE |
