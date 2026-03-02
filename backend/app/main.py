@@ -7,14 +7,25 @@ settings = get_settings()
 
 app = FastAPI(
     title="Kilter Up API",
-    description="Video analysis for Kilterboard",
-    version="0.1.0"
+    description="AI-powered climbing video form analysis",
+    version="0.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-# CORS
+# CORS — permissive in dev, restricted in prod
+origins = (
+    ["*"]
+    if settings.environment == "development"
+    else [
+        "https://kilter-training-app.vercel.app",
+        "https://*.vercel.app",
+    ]
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

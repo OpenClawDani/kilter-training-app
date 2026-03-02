@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
-import uuid
 
 
 class VideoUploadCreate(BaseModel):
@@ -9,10 +8,12 @@ class VideoUploadCreate(BaseModel):
 
 
 class VideoUploadResponse(BaseModel):
-    id: uuid.UUID
+    id: str
     status: str
     original_file_path: str
     fragment_file_path: Optional[str] = None
+    fragment_start: Optional[float] = None
+    fragment_end: Optional[float] = None
     form_feedback: Optional[str] = None
     grade_estimate: Optional[str] = None
     body_position: Optional[dict] = None
@@ -22,6 +23,7 @@ class VideoUploadResponse(BaseModel):
     duration: Optional[float] = None
     file_size: Optional[int] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
