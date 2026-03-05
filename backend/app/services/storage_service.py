@@ -1,80 +1,105 @@
+"""
+Local file storage service for uploaded climbing videos.
+"""
+
 import os
-import shutil
-import subprocess
-import json
-from fastapi import UploadFile, HTTPException
+import uuid
+import logging
+from pathlib import Path
 
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
-MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "500")) * 1024 * 1024  # bytes
-ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi"}
+from fastapi import UploadFile
+
+logger = logging.getLogger(__name__)
+
+# Resolve uploads directory relative to the project root.
+# Override with UPLOADS_DIR env var if needed.
+_DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", str(_DEFAULT_UPLOADS_DIR)))
+
+ALLOWED_MIME_TYPES = {
+    "video/mp4",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/webm",
+    "video/mpeg",
+}
+
+MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
 
 
-async def save_video(file: UploadFile, user_id: str) -> dict:
+def _ensure_uploads_dir() -> None:
+    """Create the uploads directory if it does not exist."""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    logger.debug("Uploads directory ensured: %s", UPLOADS_DIR)
+
+
+def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
     """
-    Saves uploaded video to local filesystem.
-    Returns: {file_path, file_size, filename}
+    Persist an uploaded video file to local storage.
+
+    Args:
+        file: The FastAPI UploadFile object from the request.
+
+    Returns:
+        A tuple of (video_id, file_path) where:
+          - video_id is a unique string identifier (UUID4)
+          - file_path is the absolute path to the saved file on disk
+
+    Raises:
+        ValueError: If the MIME type is not allowed or the file exceeds the size limit.
+        IOError: If writing to disk fails.
     """
-    # Validate extension
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type '{ext}' not allowed. Accepted: {', '.join(ALLOWED_EXTENSIONS)}"
+    _ensure_uploads_dir()
+
+    # Validate MIME type
+    content_type = file.content_type or ""
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise ValueError(
+            f"Unsupported file type '{content_type}'. "
+            f"Allowed types: {', '.join(sorted(ALLOWED_MIME_TYPES))}"
         )
 
-    # Create user upload directory
-    user_dir = os.path.join(UPLOAD_DIR, user_id)
-    os.makedirs(user_dir, exist_ok=True)
+    # Derive a safe file extension
+    original_name = file.filename or "upload"
+    suffix = Path(original_name).suffix.lower() or ".mp4"
 
-    # Generate unique filename
-    import uuid
-    filename = f"{uuid.uuid4()}{ext}"
-    file_path = os.path.join(user_dir, filename)
+    video_id = str(uuid.uuid4())
+    dest_filename = f"{video_id}{suffix}"
+    dest_path = UPLOADS_DIR / dest_filename
 
-    # Save file and track size
-    file_size = 0
-    with open(file_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):  # 1MB chunks
-            file_size += len(chunk)
-            if file_size > MAX_FILE_SIZE:
-                f.close()
-                os.remove(file_path)
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File too large. Maximum size: {MAX_FILE_SIZE // (1024*1024)}MB"
-                )
-            f.write(chunk)
+    logger.info(
+        "Saving uploaded file '%s' → '%s'", original_name, dest_path
+    )
 
-    return {
-        "file_path": file_path,
-        "file_size": file_size,
-        "filename": filename,
-    }
-
-
-async def delete_video(file_path: str) -> bool:
-    """Deletes video file from storage."""
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        return True
-    return False
-
-
-async def get_file_duration(file_path: str) -> float:
-    """Returns video duration in seconds using ffprobe."""
     try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "quiet",
-                "-print_format", "json",
-                "-show_format",
-                file_path,
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            return 0.0
-        info = json.loads(result.stdout)
-        return float(info.get("format", {}).get("duration", 0.0))
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
-        return 0.0
+        total_bytes = 0
+        chunk_size = 1024 * 1024  # 1 MB chunks
+
+        with open(dest_path, "wb") as out_file:
+            while True:
+                chunk = file.file.read(chunk_size)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_FILE_SIZE_BYTES:
+                    out_file.close()
+                    dest_path.unlink(missing_ok=True)
+                    raise ValueError(
+                        f"File exceeds maximum allowed size of "
+                        f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB."
+                    )
+                out_file.write(chunk)
+
+    except ValueError:
+        raise
+    except Exception as exc:
+        # Clean up partial file on any write error
+        dest_path.unlink(missing_ok=True)
+        raise IOError(f"Failed to save uploaded file: {exc}") from exc
+
+    logger.info(
+        "File saved successfully: %s (%.2f MB)",
+        dest_path,
+        total_bytes / (1024 * 1024),
+    )
+    return video_id, str(dest_path)

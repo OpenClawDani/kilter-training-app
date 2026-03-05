@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, BackgroundTasks, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Optional
 import os
+import logging
+from datetime import datetime
 
 from app.core.database import get_db, SessionLocal
 from app.core.deps import get_current_user
@@ -12,9 +14,13 @@ from app.schemas.video import (
     VideoUploadResponse,
     FragmentRequest,
     AnalysisResponse,
+    VideoResponse,
+    FormFeedbackResponse,
 )
 from app.services import storage_service, video_service, gemini_service
+from app.services.gemini_service import upload_video_to_gemini, analyze_climbing_form
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -89,7 +95,7 @@ async def create_fragment(
 
 
 async def _run_analysis(video_id: str, analysis_path: str):
-    """Background task: runs Gemini analysis and updates DB record."""
+    """Background task: runs Gemini analysis and updates DB record (legacy)."""
     db = SessionLocal()
     try:
         video_record = db.execute(
@@ -113,6 +119,50 @@ async def _run_analysis(video_id: str, analysis_path: str):
         ).scalars().first()
         if video_record:
             video_record.status = "failed"
+            db.commit()
+    finally:
+        db.close()
+
+
+async def _background_analyze_phase2(
+    video_id: str,
+    file_path: str,
+    db: Session,
+) -> None:
+    """Background task: upload to Gemini File API and analyze (Phase 2)."""
+    try:
+        video = db.query(VideoUpload).filter(VideoUpload.id == video_id).first()
+        if not video:
+            logger.warning("Video %s not found during background analysis", video_id)
+            return
+
+        logger.info("Starting Phase 2 background analysis for video %s", video_id)
+        video.processing_status = "processing"
+        db.commit()
+
+        # Upload to Gemini File API
+        logger.debug("Uploading video %s to Gemini", video_id)
+        gemini_file_id = upload_video_to_gemini(file_path)
+        video.gemini_file_id = gemini_file_id
+        db.commit()
+
+        # Analyze with Gemini
+        logger.debug("Analyzing video %s with Gemini", video_id)
+        analysis_dict = analyze_climbing_form(gemini_file_id)
+        
+        # Store results
+        video.form_analysis = analysis_dict
+        video.processing_status = "completed"
+        video.completed_at = datetime.utcnow()
+        db.commit()
+
+        logger.info("Phase 2 analysis completed for video %s", video_id)
+
+    except Exception as e:
+        logger.error("Phase 2 analysis failed for video %s: %s", video_id, str(e))
+        video = db.query(VideoUpload).filter(VideoUpload.id == video_id).first()
+        if video:
+            video.processing_status = "failed"
             db.commit()
     finally:
         db.close()
@@ -170,13 +220,77 @@ async def list_videos(
     return [VideoUploadResponse.model_validate(v) for v in videos]
 
 
+@router.post("/v2/upload", response_model=VideoResponse, status_code=status.HTTP_202_ACCEPTED)
+async def upload_video_phase2(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VideoResponse:
+    """
+    [PHASE 2] Upload a climbing video for form analysis.
+    Uses Gemini File API for direct video processing.
+    
+    Returns HTTP 202 Accepted with video_id.
+    Poll GET /api/videos/{video_id} to check status and retrieve results.
+    """
+    try:
+        # Save file locally
+        logger.info("Saving uploaded file %s for user %s", file.filename, current_user.id)
+        video_id, file_path = await storage_service.save_video(file, str(current_user.id))
+
+        # Create database record
+        video_upload = VideoUpload(
+            id=video_id,
+            user_id=current_user.id,
+            filename=file.filename or "upload",
+            file_size=file.size or 0,
+            file_path=file_path,
+            processing_status="uploading",
+        )
+        db.add(video_upload)
+        db.commit()
+        db.refresh(video_upload)
+
+        logger.info("Video %s created in database, queuing background analysis", video_id)
+
+        # Queue background analysis (Phase 2 Gemini File API)
+        background_tasks.add_task(
+            _background_analyze_phase2,
+            video_id,
+            file_path,
+            db,
+        )
+
+        return VideoResponse(
+            id=video_upload.id,
+            user_id=video_upload.user_id,
+            filename=video_upload.filename,
+            file_size=video_upload.file_size,
+            file_path=video_upload.file_path,
+            gemini_file_id=video_upload.gemini_file_id,
+            processing_status=video_upload.processing_status,
+            created_at=video_upload.created_at,
+        )
+
+    except ValueError as e:
+        logger.warning("File validation failed: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except IOError as e:
+        logger.error("File storage failed: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error during upload: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload failed")
+
+
 @router.get("/{video_id}", response_model=VideoUploadResponse)
 async def get_video(
     video_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get a single video with full analysis results."""
+    """Get a single video with full analysis results (legacy + Phase 2)."""
     video_record = db.execute(
         select(VideoUpload).where(
             VideoUpload.id == video_id,

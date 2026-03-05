@@ -1,88 +1,166 @@
-import json
+"""
+Gemini File API wrapper for climbing video analysis.
+Uses gemini-2.0-flash to analyze climbing technique from uploaded videos.
+"""
+
+import os
 import time
+import logging
+from typing import Any
+
 import google.generativeai as genai
-from app.core.config import get_settings
 
-CLIMBING_ANALYSIS_PROMPT = """You are an expert climbing coach analyzing a bouldering video.
-Analyze the climber's form and provide:
-1. Overall form feedback (1-2 sentences)
-2. Grade estimate (e.g. V4, V5)
-3. Body position analysis: posture, tension, efficiency score (0-10)
-4. Holds analysis: for each key hold, position, type, and quality of interaction
-5. Top 3 key weaknesses to improve
+logger = logging.getLogger(__name__)
 
-Return ONLY valid JSON with these exact keys:
+# Configure Gemini with API key from environment
+_api_key = os.getenv("GEMINI_API_KEY")
+if not _api_key:
+    raise EnvironmentError("GEMINI_API_KEY environment variable is not set.")
+genai.configure(api_key=_api_key)
+
+MODEL_NAME = "gemini-2.0-flash"
+
+CLIMBING_ANALYSIS_PROMPT = """
+You are an expert climbing coach with deep knowledge of sport climbing, bouldering, and movement technique.
+
+Analyze this climbing video and provide a detailed, structured assessment.
+
+Return your analysis as a JSON object with the following keys:
+
 {
-  "form_feedback": "string",
-  "grade_estimate": "string",
-  "body_position": {"posture": "string", "tension": "string", "efficiency_score": number},
-  "holds_analysis": [{"position": "string", "type": "string", "quality": "string"}],
-  "key_weaknesses": ["string", "string", "string"]
-}"""
+  "overall_grade_estimate": "<e.g. V4, 6b+, 5.11a — estimated difficulty of the problem/route>",
+  "technique_score": <integer 1–10, overall technique quality>,
+  "body_tension_score": <integer 1–10, core and full-body tension>,
+  "footwork_score": <integer 1–10, foot placement precision and trust>,
+  "summary": "<2–3 sentence overall impression>",
+  "strengths": ["<strength 1>", "<strength 2>", ...],
+  "weaknesses": ["<weakness 1>", "<weakness 2>", ...],
+  "specific_feedback": {
+    "footwork": "<detailed footwork observations>",
+    "body_positioning": "<hip positioning, center of gravity, body rotation>",
+    "arm_usage": "<straight-arm vs bent-arm, lock-off quality, reach efficiency>",
+    "breathing_pacing": "<observations on rhythm and rest usage>",
+    "route_reading": "<evidence of pre-planning, hesitation, or improvisation>"
+  },
+  "drills_recommended": ["<drill 1>", "<drill 2>", ...],
+  "next_steps": "<1–2 sentence actionable coaching cue>"
+}
 
-_configured = False
-
-# Max time to wait for Gemini to process a video file (seconds)
-FILE_PROCESSING_TIMEOUT = 300
-FILE_PROCESSING_POLL_INTERVAL = 2
+Be specific, honest, and constructive. Base observations strictly on what is visible in the video.
+Return ONLY the JSON object, no markdown fences, no preamble.
+"""
 
 
-def _ensure_configured():
-    global _configured
-    if not _configured:
-        settings = get_settings()
-        genai.configure(api_key=settings.gemini_api_key)
-        _configured = True
-
-
-async def analyze_climbing_form(video_path: str) -> dict:
+def upload_video_to_gemini(file_path: str) -> str:
     """
-    Sends video to Gemini Vision for climbing form analysis using the File API.
-    Uploads the entire video once, waits for processing, then makes a single
-    generate_content call. NO frame-by-frame extraction.
+    Upload a local video file to the Gemini File API.
 
-    Returns parsed dict matching AnalysisResponse schema.
+    Args:
+        file_path: Absolute or relative path to the video file.
+
+    Returns:
+        The Gemini File API URI (e.g. "files/abc123") to reference in generation requests.
+
+    Raises:
+        FileNotFoundError: If the file does not exist at the given path.
+        RuntimeError: If the upload fails or the file never reaches ACTIVE state.
     """
-    _ensure_configured()
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Video file not found: {file_path}")
 
-    # Step 1: Upload entire video to Gemini File API (one upload)
-    video_file = genai.upload_file(path=video_path)
+    logger.info("Uploading video to Gemini File API: %s", file_path)
 
-    # Step 2: Wait for Gemini to finish processing the video
+    try:
+        uploaded_file = genai.upload_file(
+            path=file_path,
+            mime_type="video/mp4",
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Gemini file upload failed: {exc}") from exc
+
+    # Poll until the file is ACTIVE (processing can take a few seconds)
+    max_wait_seconds = 120
+    poll_interval = 5
     elapsed = 0
-    while video_file.state.name == "PROCESSING":
-        if elapsed >= FILE_PROCESSING_TIMEOUT:
-            raise TimeoutError(
-                f"Gemini file processing timed out after {FILE_PROCESSING_TIMEOUT}s"
+
+    while uploaded_file.state.name == "PROCESSING":
+        if elapsed >= max_wait_seconds:
+            raise RuntimeError(
+                f"Gemini file {uploaded_file.name} still PROCESSING after "
+                f"{max_wait_seconds}s — aborting."
             )
-        time.sleep(FILE_PROCESSING_POLL_INTERVAL)
-        elapsed += FILE_PROCESSING_POLL_INTERVAL
-        video_file = genai.get_file(video_file.name)
+        logger.debug(
+            "File %s is PROCESSING, waiting %ss …", uploaded_file.name, poll_interval
+        )
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+        uploaded_file = genai.get_file(uploaded_file.name)
 
-    if video_file.state.name == "FAILED":
-        raise RuntimeError("Gemini file processing failed")
+    if uploaded_file.state.name != "ACTIVE":
+        raise RuntimeError(
+            f"Gemini file {uploaded_file.name} ended in unexpected state: "
+            f"{uploaded_file.state.name}"
+        )
 
-    # Step 3: Single API call — Gemini analyzes the full video internally
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    response = model.generate_content(
-        [video_file, CLIMBING_ANALYSIS_PROMPT],
-        generation_config=genai.types.GenerationConfig(
-            temperature=0.3,
-            response_mime_type="application/json",
-        ),
-    )
+    logger.info("File uploaded and ACTIVE: %s", uploaded_file.name)
+    return uploaded_file.name  # e.g. "files/abc123xyz"
 
-    # Parse JSON response
-    text = response.text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
-    result = json.loads(text)
+def analyze_climbing_form(gemini_file_id: str) -> dict[str, Any]:
+    """
+    Run climbing-form analysis on a previously uploaded Gemini file.
 
-    return {
-        "form_feedback": result.get("form_feedback", "Analysis completed"),
-        "grade_estimate": result.get("grade_estimate"),
-        "body_position": result.get("body_position", {"posture": "unknown", "tension": "unknown", "efficiency_score": 0}),
-        "holds_analysis": result.get("holds_analysis", []),
-        "key_weaknesses": result.get("key_weaknesses", []),
-    }
+    Args:
+        gemini_file_id: The Gemini File API name (e.g. "files/abc123xyz")
+                        returned by upload_video_to_gemini().
+
+    Returns:
+        A dict with structured coaching feedback including scores, strengths,
+        weaknesses, drill recommendations, and specific technique notes.
+
+    Raises:
+        RuntimeError: If the Gemini API call fails or returns unparseable output.
+    """
+    import json
+
+    logger.info("Requesting climbing analysis for file: %s", gemini_file_id)
+
+    try:
+        file_ref = genai.get_file(gemini_file_id)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not retrieve Gemini file '{gemini_file_id}': {exc}"
+        ) from exc
+
+    model = genai.GenerativeModel(model_name=MODEL_NAME)
+
+    try:
+        response = model.generate_content(
+            [file_ref, CLIMBING_ANALYSIS_PROMPT],
+            generation_config=genai.GenerationConfig(
+                temperature=0.3,  # Low temp for consistent structured output
+                max_output_tokens=2048,
+            ),
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Gemini generation failed: {exc}") from exc
+
+    raw_text = response.text.strip()
+    logger.debug("Raw Gemini response: %s", raw_text[:500])
+
+    # Strip accidental markdown fences if the model adds them
+    if raw_text.startswith("```"):
+        lines = raw_text.splitlines()
+        raw_text = "\n".join(
+            line for line in lines if not line.startswith("```")
+        ).strip()
+
+    try:
+        analysis: dict[str, Any] = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Gemini returned non-JSON response: {exc}\n\nRaw output:\n{raw_text}"
+        ) from exc
+
+    logger.info("Climbing analysis complete for file: %s", gemini_file_id)
+    return analysis
