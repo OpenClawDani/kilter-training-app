@@ -6,3 +6,5 @@ __pycache__/
 *.db
 .pytest_cache/
 .vscode/
+data/
+!data/SCHEMA_NOTES.md
