@@ -28,17 +28,18 @@
 
 ---
 
-## 🎯 CORE STRATEGY (Non si discute)
+## 🎯 CORE STRATEGY (Updated March 2026)
 
-```
-🎥 VIDEO = CORE FEATURE (priorità assoluta)
-   Upload video → Gemini Video API → form analysis
-   Output: "V5, body tension ok, weak on sloper finish"
+The project has evolved from video analysis to **AI Climbing Coach**.
 
-📸 PHOTO = UTILITY (supplementare, Phase 2)
-   BoardLib API per quick circuit logging
-   NON è il differenziale principale
-```
+3-LEVEL INTELLIGENCE SYSTEM:
+- Level 1: Solo video analysis (Gemini analyzes your technique) — ✅ WORKING
+- Level 2: Contextual analysis (your video + climb data from BoardLib DB) — 🎯 NEXT
+- Level 3: Expert comparison (your video vs expert beta video) — 🔮 FUTURE
+
+VIDEO = CORE. But now enriched with Kilter Board data (160k+ climbs, grades, holds, angles).
+See RESEARCH.md for full ecosystem audit.
+See ROADMAP_ACTIVE.md for detailed implementation plan.
 
 ---
 
@@ -123,34 +124,44 @@ for frame in frames:
 **Decisione:** Background task con FastAPI `BackgroundTasks` (built-in), non Celery.
 **Perché:** Celery aggiunge complessità (Redis dependency). FastAPI BackgroundTasks è sufficiente per MVP.
 
+### 6. BoardLib for Kilter Board Data (not custom scraping)
+**Decision:** Use BoardLib Python library to download the official Kilter Board SQLite database locally.
+**Why:**
+- Gives us 160k+ climbs with full metadata (grade, holds, angle, ascents)
+- Open source, pip installable, maintained
+- Database is ~85MB, stored locally (gitignored)
+- No need to reverse engineer Aurora Climbing API ourselves
+- Sync command updates DB incrementally
+
+### 7. Search-first for Climb Identification (not vision-first)
+**Decision:** Users search/select climbs by name with autocomplete as primary flow. Visual LED recognition is a future enhancement.
+**Why:**
+- Simpler, more reliable, works offline
+- BoardLib DB enables fast local search
+- Visual recognition has too many edge cases for MVP (lighting, angle, occlusion)
+- Can add visual recognition in Phase 4 without changing core flow
+
+### 8. 3-Level Analysis Architecture
+**Decision:** Build intelligence incrementally — solo analysis → contextual → comparison.
+**Why:**
+- Level 1 already works (Gemini + video)
+- Level 2 only requires BoardLib integration (no external video sources)
+- Level 3 depends on video availability (YouTube/Instagram) — decouple from MVP
+- Each level is independently valuable
+
 ---
 
 ## 🗺️ ROADMAP
 
 ### ✅ Phase 1 — Foundation (Done)
-- FastAPI backend
-- Auth JWT
-- Database setup
+### ✅ Phase 2 — Video Analysis (Done)
+### 🎯 Phase 3 — BoardLib Integration + Climb Context (NEXT)
+### ⏳ Phase 4 — Visual Problem Recognition
+### ⏳ Phase 5 — Expert Video Comparison
+### ⏳ Phase 6 — Training Logs + Progress
+### ⏳ Phase 7 — Deploy & Polish
 
-### ✅ Phase 2 — Video Analysis (DONE)
-**Obiettivo:** Upload video → Gemini analizza → feedback form
-
-Completato. Vedi ROADMAP_ACTIVE.md per le prossime fasi.
-
-### ⏳ Phase 3 — Training Logs
-- Log sessioni di arrampicata
-- Tracking progressi nel tempo
-- Weekly training plan
-
-### ⏳ Phase 4 — Circuit Logger (BoardLib)
-- Foto circuito LED → riconosce circuito BoardLib
-- Log rapido "ho fatto questo circuito"
-- Supplementare al video analysis
-
-### ⏳ Phase 5 — Deploy & Polish
-- Railway (backend) + Vercel (frontend)
-- Dashboard analytics
-- Mobile responsive
+See ROADMAP_ACTIVE.md for full details.
 
 ---
 
