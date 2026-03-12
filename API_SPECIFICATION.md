@@ -1,6 +1,10 @@
 # 🔌 KILTER UP - API Specification
 
-**Version:** 1.0  
+> 📋 STATO IMPLEMENTAZIONE (marzo 2026):
+> - ✅ Implementati: /auth/register, /auth/login, /auth/me, /videos/upload, /videos/{id}
+> - ⏳ Phase 2/3 (non ancora implementati): /circuits/*, /training-logs/*, /training-plans/*, /statistics
+
+**Version:** 1.0
 **Base URL:** `/api/v1`  
 **Content-Type:** `application/json`  
 **Auth:** JWT tokens in `Authorization: Bearer <token>` header

@@ -6,7 +6,7 @@
 
 ---
 
-## 🗓️ Ultimo Aggiornamento: 22 Febbraio 2026
+## 🗓️ Ultimo Aggiornamento: 12 Marzo 2026
 
 ---
 
@@ -132,24 +132,10 @@ for frame in frames:
 - Auth JWT
 - Database setup
 
-### 🎯 Phase 2 — Video Analysis (PROSSIMO)
+### ✅ Phase 2 — Video Analysis (DONE)
 **Obiettivo:** Upload video → Gemini analizza → feedback form
 
-**Tasks:**
-1. Aggiorna VideoUpload model (schema per Gemini results)
-2. Crea Alembic migration 002
-3. Implementa `gemini_service.py` (Gemini File API + analyze)
-4. Implementa `storage_service.py` (salva video localmente)
-5. Endpoint `POST /api/videos/upload`
-6. Endpoint `POST /api/videos/{id}/analyze`
-7. Endpoint `GET /api/videos/{id}` (polling status)
-8. Tests (pytest)
-9. Frontend: upload UI (drag-drop) + status page
-
-**Acceptance criteria:**
-- Upload MP4 → ricevo video_id
-- Chiamo /analyze → Gemini processa → ricevo form_feedback
-- Frontend mostra il feedback in modo leggibile
+Completato. Vedi ROADMAP_ACTIVE.md per le prossime fasi.
 
 ### ⏳ Phase 3 — Training Logs
 - Log sessioni di arrampicata
@@ -176,17 +162,17 @@ kilter-training-app/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── auth.py             ✅ JWT auth endpoints
-│   │   │   └── videos.py           ⏳ DA FARE
+│   │   │   └── videos.py           ✅
 │   │   ├── models/
 │   │   │   ├── user.py             ✅
-│   │   │   └── video.py            🔄 DA AGGIORNARE
+│   │   │   └── video.py            ✅
 │   │   ├── schemas/
 │   │   │   ├── user.py             ✅
-│   │   │   └── video.py            ⏳ DA FARE
+│   │   │   └── video.py            ✅
 │   │   ├── services/
 │   │   │   ├── auth_service.py     ✅
-│   │   │   ├── gemini_service.py   ⏳ DA FARE (usa File API!)
-│   │   │   └── storage_service.py  ⏳ DA FARE
+│   │   │   ├── gemini_service.py   ✅
+│   │   │   └── storage_service.py  ✅
 │   │   ├── core/
 │   │   │   ├── config.py           ✅
 │   │   │   ├── database.py         ✅
@@ -195,19 +181,19 @@ kilter-training-app/
 │   ├── alembic/
 │   │   └── versions/
 │   │       ├── 001_initial.py      ✅
-│   │       └── 002_video_form.py   ⏳ DA CREARE
+│   │       └── 002_video_form.py   ✅
 │   ├── tests/
 │   │   ├── test_auth.py            ✅
-│   │   └── test_videos.py          ⏳ DA FARE
+│   │   └── test_videos.py          ✅
 │   ├── uploads/                    (gitignored)
-│   ├── requirements.txt            🔄 aggiungere google-generativeai
+│   ├── requirements.txt            ✅
 │   └── .env                        ✅ (gitignored, Gemini key inside)
 ├── app/ (Next.js frontend)
 │   └── page.tsx                    ✅ Homepage
 ├── CLAUDE.md                       ✅ Dev guidelines
 ├── PROJECT_STATUS.md               ✅ Questo file
 ├── REPORT_VIDEO_ANALYSIS.md        ✅ Research + feasibility
-└── DAY3_CLOUDCODE_PROMPT.md        🔄 Da aggiornare con fix Gemini File API
+└── DAY3_CLOUDCODE_PROMPT.md        ✅
 ```
 
 ---
@@ -243,5 +229,5 @@ cd backend && pytest -v
 
 ---
 
-*Creato da Sam — 22 Febbraio 2026*
+*Creato da Sam — 22 Febbraio 2026 | Aggiornato: 12 Marzo 2026*
 *Aggiorna questo file ogni volta che prendi una decisione importante!*

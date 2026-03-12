@@ -1,6 +1,11 @@
 # 🎪 KILTER UP - Piano di Implementazione Completo
 
-**Data:** 18 Febbraio 2026  
+> ⚠️ DOCUMENTO OBSOLETO — scritto prima del pivot strategico del 21/02/2026.
+> La strategia corretta è in CLAUDE.md e PROJECT_STATUS.md.
+> **VIDEO FORM ANALYSIS = CORE.** Circuit recognition = Phase 2 supplementare.
+> Questo file è un backlog storico, NON la roadmap attiva.
+
+**Data:** 18 Febbraio 2026
 **Versione:** 1.0 - Planning Phase  
 **Status:** In Development (Brainstorming & Architecture)
 
