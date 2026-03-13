@@ -111,16 +111,68 @@ class FormFeedbackResponse(BaseModel):
 # Response schemas
 # ---------------------------------------------------------------------------
 
-class VideoResponse(BaseModel):
+class FragmentRequest(BaseModel):
+    """Request body for extracting a video fragment."""
+
+    fragment_start: float = Field(..., ge=0, description="Start time in seconds.")
+    fragment_end: float = Field(..., gt=0, description="End time in seconds.")
+
+
+class AnalysisResponse(BaseModel):
+    """Response from a video analysis request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Video ID.")
+    status: str | None = Field(default=None, description="Legacy status field.")
+    processing_status: str = Field(default="pending", description="Processing status.")
+    form_analysis: FormFeedbackResponse | None = Field(
+        default=None, description="Coaching feedback."
+    )
+
+
+class VideoUploadResponse(BaseModel):
     """
-    Complete video record with metadata and (optionally) analysis results.
-    Returned after upload, polling, or retrieval.
+    Legacy response schema used by v1 upload, fragment, analyze, and list endpoints.
+    Maps to the VideoUpload ORM model.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     id: str = Field(..., description="Unique video ID (UUID).")
-    user_id: int = Field(..., description="ID of the user who uploaded.")
+    user_id: str = Field(..., description="ID of the user who uploaded.")
+    filename: str | None = Field(default=None, description="Original filename.")
+    file_path: str | None = Field(default=None, description="Storage path on disk.")
+    file_size: int | None = Field(default=None, description="File size in bytes.")
+    original_file_path: str | None = Field(default=None, description="Original video path.")
+    fragment_file_path: str | None = Field(default=None, description="Fragment video path.")
+    status: str | None = Field(default="pending", description="Legacy status.")
+    processing_status: str = Field(default="pending", description="Processing status.")
+    gemini_file_id: str | None = Field(default=None, description="Gemini File API ID.")
+    form_analysis: FormFeedbackResponse | None = Field(
+        default=None, description="Coaching feedback."
+    )
+    form_feedback: str | None = Field(default=None, description="Legacy form feedback text.")
+    grade_estimate: str | None = Field(default=None, description="Legacy grade estimate.")
+    fragment_start: float | None = Field(default=None, description="Fragment start time.")
+    fragment_end: float | None = Field(default=None, description="Fragment end time.")
+    notes: str | None = Field(default=None, description="Climber notes.")
+    duration: float | None = Field(default=None, description="Video duration in seconds.")
+    title: str | None = Field(default=None, description="Human-readable title.")
+    grade_attempted: str | None = Field(default=None, description="Climber's estimated grade.")
+    created_at: datetime = Field(..., description="Upload timestamp.")
+    completed_at: datetime | None = Field(default=None, description="Analysis completion timestamp.")
+
+
+class VideoResponse(BaseModel):
+    """
+    Phase 2 response schema for video upload with Gemini File API.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Unique video ID (UUID).")
+    user_id: str = Field(..., description="ID of the user who uploaded.")
     filename: str = Field(..., description="Original filename.")
     file_size: int = Field(..., description="File size in bytes.")
     file_path: str = Field(..., description="Storage path on disk.")
