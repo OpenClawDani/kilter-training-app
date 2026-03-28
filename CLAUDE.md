@@ -4,7 +4,7 @@
 **Kilter-Up** — AI-powered climbing form analysis app.
 
 **Core Value Proposition:**
-- Upload a climbing video → extract a fragment → Gemini Vision analyzes your form → get actionable feedback
+- Upload a climbing video → Gemini File API analyzes your form → get structured coaching feedback
 - NOT a circuit recognition app. Form analysis is the core.
 
 **Primary Tech Stack:**
@@ -18,11 +18,10 @@
 
 ```
 🎥 VIDEO = CORE FEATURE
-  Upload video → extract fragment (trim/stabilize)
-  → Gemini Vision → form analysis
-  → Output: "V5 in 45s, form solid, weak finish on sloper"
+  Upload video → Gemini File API → structured form analysis
+  → Output: scores, strengths, weaknesses, drills, coaching cues
 
-📸 PHOTO = UTILITY (supplementary, Phase 2)
+📸 PHOTO = UTILITY (supplementary, Phase 3+)
   Quick LED recognition (BoardLib) for logging
   → NOT the main value driver
 ```
@@ -36,12 +35,19 @@
 
 ---
 
-## 📦 Current State (Day 2 Complete)
+## 📦 Current State (B001 Cleanup Complete — 28 March 2026)
 
-✅ **Day 1:** FastAPI backend + Docker setup
-✅ **Day 2:** Auth system (JWT) + User model + VideoUpload model (needs update)
+✅ **Phase 1:** FastAPI backend, JWT auth, User model, Alembic migrations
+✅ **Phase 2:** Video upload + Gemini File API analysis (consolidated pipeline)
+✅ **B001:** Codebase rationalization — single endpoint set, clean migrations, all tests green
 
-**Day 3 Goal:** Video upload endpoint + Gemini Vision integration
+**Video API surface (consolidated):**
+- `POST /api/videos/upload` → 202 (background Gemini analysis)
+- `GET /api/videos/{id}` → video + status/results
+- `GET /api/videos` → paginated list
+- `DELETE /api/videos/{id}` → delete
+
+**Next:** Phase 3 — BoardLib integration for contextual AI coaching
 
 ---
 
@@ -76,9 +82,9 @@ kilter-training-app/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── auth.py             ✅ (JWT auth)
-│   │   │   ├── videos.py           🔲 (video upload + analysis)
-│   │   │   └── sessions.py         🔲 (session CRUD)
+│   │   │   ├── auth.py             ✅ JWT auth (register, login, /me)
+│   │   │   ├── videos.py           ✅ Upload, list, get, delete
+│   │   │   └── circuits.py         ✅ Stub for future BoardLib
 │   │   ├── core/
 │   │   │   ├── config.py           ✅
 │   │   │   ├── database.py         ✅
@@ -86,29 +92,37 @@ kilter-training-app/
 │   │   │   └── deps.py             ✅
 │   │   ├── models/
 │   │   │   ├── user.py             ✅
-│   │   │   └── video.py            🔄 (needs update for form analysis)
+│   │   │   └── video.py            ✅
 │   │   ├── schemas/
 │   │   │   ├── user.py             ✅
 │   │   │   ├── auth.py             ✅
-│   │   │   └── video.py            🔲 (new)
+│   │   │   └── video.py            ✅ VideoResponse, FormFeedbackResponse
 │   │   ├── services/
 │   │   │   ├── auth_service.py     ✅
-│   │   │   ├── gemini_service.py   🔲 (Gemini Vision wrapper)
-│   │   │   ├── video_service.py    🔲 (ffmpeg fragment extraction)
-│   │   │   └── storage_service.py  🔲 (local + S3)
+│   │   │   ├── gemini_service.py   ✅ File API (lazy init)
+│   │   │   ├── video_service.py    ✅ ffmpeg utils
+│   │   │   └── storage_service.py  ✅ Local filesystem
+│   │   ├── utils/
+│   │   │   └── kilter_parser.py    ✅ Layout parser
 │   │   └── main.py                 ✅
-│   ├── alembic/                    ✅
+│   ├── alembic/versions/
+│   │   ├── 001_initial_migration.py ✅
+│   │   └── 002_video_form_analysis.py ✅
 │   ├── tests/
-│   │   ├── test_auth_validation.py ✅
-│   │   └── test_videos.py          🔲 (new)
+│   │   ├── test_videos.py          ✅ 46 tests
+│   │   └── test_kilter_parser.py   ✅
+│   ├── conftest.py                 ✅
 │   └── requirements.txt
-├── frontend/ (Next.js 14)
-│   └── app/
-│       ├── page.tsx                ✅ (homepage)
-│       ├── upload/page.tsx         🔲
-│       ├── session/[id]/page.tsx   🔲
-│       └── dashboard/page.tsx      🔲
-└── CLAUDE.md
+├── app/ (Next.js 14 frontend)
+│   ├── page.tsx                    ✅ Homepage
+│   ├── upload/page.tsx             ✅ Drag-drop upload
+│   ├── login/page.tsx              ✅
+│   ├── dashboard/page.tsx          ✅
+│   └── videos/[id]/page.tsx        ✅
+├── CLAUDE.md                       ✅ This file
+├── PROJECT_STATUS.md               ✅ Decisions log
+├── ROADMAP_ACTIVE.md               ✅ Phase plan
+└── RESEARCH.md                     ✅ Ecosystem audit
 ```
 
 ---
@@ -155,5 +169,5 @@ git push origin main
 
 ---
 
-**Version:** 2.0 (strategy updated 2026-02-21 — VIDEO = CORE)
+**Version:** 2.1 (B001 cleanup 2026-03-28 — consolidated pipeline, all tests green)
 **Owner:** Daniele Somensi + Sam (AI Agent)

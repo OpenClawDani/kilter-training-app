@@ -6,7 +6,7 @@
 
 ---
 
-## 🗓️ Ultimo Aggiornamento: 12 Marzo 2026
+## 🗓️ Ultimo Aggiornamento: 28 Marzo 2026
 
 ---
 
@@ -14,17 +14,18 @@
 
 | Componente | Status | Note |
 |------------|--------|------|
-| Backend FastAPI | ✅ Done | Auth JWT funzionante, SQLite |
-| Auth (JWT) | ✅ Done | Register, login, token |
-| User model + migrations | ✅ Done | Alembic setup |
-| VideoUpload model | ✅ Done | Schema aggiornato per Gemini results |
-| Gemini Video Service | ✅ Done | File API implementata, fix frame-by-frame |
-| Video upload endpoint | ✅ Done | POST /api/videos/upload |
+| Backend FastAPI | ✅ Done | Auth JWT + video pipeline, SQLite, Python 3.11 |
+| Auth (JWT) | ✅ Done | Register, login, /me |
+| VideoUpload model | ✅ Done | Consolidated — form_analysis JSON, processing_status |
+| Gemini Video Service | ✅ Done | File API, lazy init, gemini-2.0-flash |
+| Video endpoints | ✅ Done | POST upload (202), GET /{id}, GET list, DELETE |
+| Alembic migrations | ✅ Done | 001 (initial) + 002 (form analysis) — single head |
+| Tests | ✅ Done | 46 passed, 5 skipped (DB-dependent) |
 | Frontend upload UI | ✅ Done | Drag-drop, progress bar, mobile-first |
-| Training logs | ⏳ Da fare | Phase 2 |
-| Circuit logger (BoardLib) | ⏳ Da fare | Phase 2 — SUPPLEMENTARE |
-| Dashboard | ⏳ Da fare | Phase 3 |
-| Deploy (Railway + Vercel) | ⏳ Da fare | Phase 4 |
+| B001 Cleanup | ✅ Done | Removed v1/v2 duplication, dead code, broken imports |
+| BoardLib integration | ⏳ Da fare | Phase 3 — climb search, contextual analysis |
+| Training logs | ⏳ Da fare | Phase 6 |
+| Deploy (Railway + Vercel) | ⏳ Da fare | Phase 7 |
 
 ---
 
@@ -172,39 +173,38 @@ kilter-training-app/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── auth.py             ✅ JWT auth endpoints
-│   │   │   └── videos.py           ✅
+│   │   │   ├── auth.py             ✅ JWT auth (register, login, /me)
+│   │   │   ├── videos.py           ✅ Upload, list, get, delete + background analysis
+│   │   │   └── circuits.py         ✅ Stub for BoardLib
 │   │   ├── models/
 │   │   │   ├── user.py             ✅
-│   │   │   └── video.py            ✅
+│   │   │   └── video.py            ✅ Consolidated model
 │   │   ├── schemas/
-│   │   │   ├── user.py             ✅
-│   │   │   └── video.py            ✅
+│   │   │   ├── user.py, auth.py    ✅
+│   │   │   └── video.py            ✅ VideoResponse, FormFeedbackResponse
 │   │   ├── services/
 │   │   │   ├── auth_service.py     ✅
-│   │   │   ├── gemini_service.py   ✅
-│   │   │   └── storage_service.py  ✅
-│   │   ├── core/
-│   │   │   ├── config.py           ✅
-│   │   │   ├── database.py         ✅
-│   │   │   └── security.py         ✅
+│   │   │   ├── gemini_service.py   ✅ File API, lazy init
+│   │   │   ├── video_service.py    ✅ ffmpeg utils
+│   │   │   └── storage_service.py  ✅ Local filesystem
+│   │   ├── utils/
+│   │   │   └── kilter_parser.py    ✅ Layout parser for BoardLib
+│   │   ├── core/                   ✅ config, database, security, deps
 │   │   └── main.py                 ✅
-│   ├── alembic/
-│   │   └── versions/
-│   │       ├── 001_initial.py      ✅
-│   │       └── 002_video_form.py   ✅
-│   ├── tests/
-│   │   ├── test_auth.py            ✅
-│   │   └── test_videos.py          ✅
-│   ├── uploads/                    (gitignored)
+│   ├── alembic/versions/           ✅ 001 + 002 (single head)
+│   ├── tests/                      ✅ 46 passed
+│   ├── conftest.py                 ✅ In-memory SQLite fixtures
 │   ├── requirements.txt            ✅
-│   └── .env                        ✅ (gitignored, Gemini key inside)
-├── app/ (Next.js frontend)
-│   └── page.tsx                    ✅ Homepage
+│   └── .env                        (gitignored)
+├── app/ (Next.js 14 frontend)
+│   ├── upload/page.tsx             ✅ Drag-drop upload
+│   ├── login/page.tsx              ✅
+│   └── ...
+├── docs/archive/                   Historical sprint docs
 ├── CLAUDE.md                       ✅ Dev guidelines
-├── PROJECT_STATUS.md               ✅ Questo file
-├── REPORT_VIDEO_ANALYSIS.md        ✅ Research + feasibility
-└── DAY3_CLOUDCODE_PROMPT.md        ✅
+├── PROJECT_STATUS.md               ✅ This file
+├── ROADMAP_ACTIVE.md               ✅ Phase plan
+└── RESEARCH.md                     ✅ Ecosystem audit
 ```
 
 ---
@@ -240,5 +240,5 @@ cd backend && pytest -v
 
 ---
 
-*Creato da Sam — 22 Febbraio 2026 | Aggiornato: 12 Marzo 2026*
+*Creato da Sam — 22 Febbraio 2026 | Aggiornato: 28 Marzo 2026*
 *Aggiorna questo file ogni volta che prendi una decisione importante!*
