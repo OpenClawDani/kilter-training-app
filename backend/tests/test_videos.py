@@ -1,6 +1,6 @@
 """
-Test suite for video upload, fragment extraction, and Gemini analysis endpoints.
-Uses SQLite in-memory DB and mocks for ffmpeg / Gemini.
+Test suite for video upload and analysis pipeline.
+Uses SQLite in-memory DB and mocks for Gemini.
 """
 
 import pytest
@@ -9,7 +9,7 @@ import io
 import os
 import json
 from datetime import datetime
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, MagicMock
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -21,27 +21,30 @@ from app.core.database import Base
 from app.core.security import create_access_token
 from app.models.user import User
 from app.models.video import VideoUpload
-from app.schemas.video import (
-    VideoUploadCreate,
-    VideoUploadResponse,
-    FragmentRequest,
-    AnalysisResponse,
-)
+from app.schemas.video import VideoResponse, FormFeedbackResponse
 from conftest import engine, TestingSessionLocal
 
 client = TestClient(app)
 
 # --- Helpers ---
 
-MOCK_GEMINI_RESULT = {
-    "form_feedback": "Solid V5 attempt, body tension is good but finish on sloper needs work.",
-    "grade_estimate": "V5",
-    "body_position": {"posture": "upright", "tension": "good", "efficiency_score": 7},
-    "holds_analysis": [
-        {"position": "start left", "type": "jug", "quality": "good"},
-        {"position": "top right", "type": "sloper", "quality": "weak"},
-    ],
-    "key_weaknesses": ["weak sloper finish", "low hip position", "over-gripping on crimps"],
+MOCK_GEMINI_ANALYSIS = {
+    "overall_grade_estimate": "V5",
+    "technique_score": 7,
+    "body_tension_score": 8,
+    "footwork_score": 6,
+    "summary": "Solid V5 attempt, body tension is good but finish on sloper needs work.",
+    "strengths": ["good body tension", "efficient movement"],
+    "weaknesses": ["weak sloper finish", "low hip position"],
+    "specific_feedback": {
+        "footwork": "Trust your feet more on the slab section.",
+        "body_positioning": "Hips could be closer to the wall.",
+        "arm_usage": "Good straight-arm technique on jugs.",
+        "breathing_pacing": "Consider resting before the crux.",
+        "route_reading": "Some hesitation mid-route suggests improvisation.",
+    },
+    "drills_recommended": ["slab traverses", "sloper hangs"],
+    "next_steps": "Focus on open-hand grip strength for sloper finishes.",
 }
 
 
@@ -70,43 +73,70 @@ def _fake_video_bytes(size: int = 1024) -> io.BytesIO:
     return io.BytesIO(b"\x00" * size)
 
 
+def _seed_video(db, user_id: str, **kwargs) -> str:
+    """Create a video record and return its id."""
+    defaults = dict(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        filename="test.mp4",
+        file_path="/uploads/test.mp4",
+        processing_status="pending",
+    )
+    defaults.update(kwargs)
+    video = VideoUpload(**defaults)
+    db.add(video)
+    db.commit()
+    return video.id
+
+
 # --- Schema Tests ---
 
 
 class TestVideoSchemas:
     """Validate Pydantic video schemas."""
 
-    def test_video_upload_create(self):
-        schema = VideoUploadCreate(notes="Morning session")
-        assert schema.notes == "Morning session"
-
-    def test_video_upload_create_no_notes(self):
-        schema = VideoUploadCreate()
-        assert schema.notes is None
-
-    def test_video_upload_response(self):
-        vid = uuid.uuid4()
+    def test_video_response(self):
         now = datetime.utcnow()
-        resp = VideoUploadResponse(
-            id=vid,
-            status="pending",
-            original_file_path="/uploads/video.mp4",
+        resp = VideoResponse(
+            id="abc-123",
+            user_id="user-456",
+            filename="climb.mp4",
+            file_size=1024,
+            processing_status="pending",
             created_at=now,
         )
-        assert resp.id == vid
-        assert resp.form_feedback is None
-        assert resp.grade_estimate is None
+        assert resp.id == "abc-123"
+        assert resp.form_analysis is None
+        assert resp.completed_at is None
 
-    def test_fragment_request_valid(self):
-        req = FragmentRequest(fragment_start=5.0, fragment_end=25.0)
-        assert req.fragment_start == 5.0
-        assert req.fragment_end == 25.0
+    def test_video_response_with_analysis(self):
+        now = datetime.utcnow()
+        resp = VideoResponse(
+            id="abc-123",
+            user_id="user-456",
+            filename="climb.mp4",
+            file_size=1024,
+            processing_status="completed",
+            form_analysis=MOCK_GEMINI_ANALYSIS,
+            created_at=now,
+            completed_at=now,
+        )
+        assert resp.form_analysis is not None
+        assert resp.form_analysis.technique_score == 7
+        assert resp.form_analysis.overall_grade_estimate == "V5"
+        assert len(resp.form_analysis.weaknesses) == 2
 
-    def test_analysis_response(self):
-        resp = AnalysisResponse(**MOCK_GEMINI_RESULT)
-        assert resp.form_feedback == MOCK_GEMINI_RESULT["form_feedback"]
-        assert resp.grade_estimate == "V5"
-        assert len(resp.key_weaknesses) == 3
+    def test_form_feedback_response(self):
+        fb = FormFeedbackResponse(**MOCK_GEMINI_ANALYSIS)
+        assert fb.technique_score == 7
+        assert fb.footwork_score == 6
+        assert fb.specific_feedback is not None
+        assert fb.specific_feedback.footwork == "Trust your feet more on the slab section."
+
+    def test_form_feedback_extra_fields_allowed(self):
+        data = {**MOCK_GEMINI_ANALYSIS, "custom_field": "extra"}
+        fb = FormFeedbackResponse(**data)
+        assert fb.custom_field == "extra"
 
 
 # --- Model Tests ---
@@ -118,34 +148,33 @@ class TestVideoModel:
     def test_model_creation(self):
         v = VideoUpload(
             user_id=str(uuid.uuid4()),
-            original_file_path="/uploads/test.mp4",
-            status="pending",
+            filename="climb.mp4",
+            file_path="/uploads/climb.mp4",
+            processing_status="pending",
         )
-        assert v.status == "pending"
-        assert v.form_feedback is None
-        assert v.body_position is None
+        assert v.processing_status == "pending"
+        assert v.form_analysis is None
 
     def test_model_with_analysis(self):
         v = VideoUpload(
             user_id=str(uuid.uuid4()),
-            original_file_path="/uploads/test.mp4",
-            status="completed",
-            form_feedback="Good form",
-            grade_estimate="V4",
-            body_position={"posture": "good", "tension": "high", "efficiency_score": 8},
-            holds_analysis=[{"position": "left", "type": "crimp", "quality": "solid"}],
-            key_weaknesses=["footwork"],
+            filename="climb.mp4",
+            file_path="/uploads/climb.mp4",
+            processing_status="completed",
+            form_analysis=MOCK_GEMINI_ANALYSIS,
         )
-        assert v.grade_estimate == "V4"
-        assert v.body_position["efficiency_score"] == 8
+        assert v.form_analysis["technique_score"] == 7
 
     def test_model_repr(self):
-        vid = str(uuid.uuid4())
-        v = VideoUpload(id=vid, user_id=str(uuid.uuid4()), original_file_path="/p", status="pending")
-        assert f"{vid} - pending" in repr(v)
+        v = VideoUpload(
+            id="test-id",
+            user_id=str(uuid.uuid4()),
+            processing_status="pending",
+        )
+        assert "test-id - pending" in repr(v)
 
 
-# --- Endpoint Tests ---
+# --- Upload Endpoint Tests ---
 
 
 class TestUploadEndpoint:
@@ -155,44 +184,55 @@ class TestUploadEndpoint:
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
 
-    @patch("app.services.storage_service.get_file_duration", new_callable=AsyncMock, return_value=42.5)
-    @patch("app.services.storage_service.save_video", new_callable=AsyncMock)
-    def test_upload_success(self, mock_save, mock_dur):
+    @patch("app.api.videos.save_uploaded_file")
+    def test_upload_success(self, mock_save):
         db = TestingSessionLocal()
         user = _create_user(db)
         db.close()
 
-        mock_save.return_value = {
-            "file_path": "uploads/test/video.mp4",
-            "file_size": 1024,
-            "filename": "video.mp4",
-        }
+        mock_save.return_value = ("vid-123", "/uploads/vid-123.mp4")
 
         resp = client.post(
             "/api/videos/upload",
             headers=_auth_header(user.id),
-            files={"video": ("climb.mp4", _fake_video_bytes(), "video/mp4")},
-            data={"notes": "Morning session"},
+            files={"file": ("climb.mp4", _fake_video_bytes(), "video/mp4")},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 202
         data = resp.json()
-        assert data["status"] == "pending"
-        assert data["notes"] == "Morning session"
-        assert data["duration"] == 42.5
-        assert data["file_size"] == 1024
-        assert "id" in data
+        assert data["id"] == "vid-123"
+        assert data["processing_status"] == "pending"
+        assert data["filename"] == "climb.mp4"
+        mock_save.assert_called_once()
+
+    @patch("app.api.videos.save_uploaded_file")
+    def test_upload_with_metadata(self, mock_save):
+        db = TestingSessionLocal()
+        user = _create_user(db)
+        db.close()
+
+        mock_save.return_value = ("vid-456", "/uploads/vid-456.mp4")
+
+        resp = client.post(
+            "/api/videos/upload",
+            headers=_auth_header(user.id),
+            files={"file": ("climb.mp4", _fake_video_bytes(), "video/mp4")},
+            data={"title": "Red V5", "grade_attempted": "V5"},
+        )
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["title"] == "Red V5"
+        assert data["grade_attempted"] == "V5"
 
     def test_upload_requires_auth(self):
         resp = client.post(
             "/api/videos/upload",
-            files={"video": ("climb.mp4", _fake_video_bytes(), "video/mp4")},
+            files={"file": ("climb.mp4", _fake_video_bytes(), "video/mp4")},
         )
         assert resp.status_code == 403
 
-    @patch("app.services.storage_service.save_video", new_callable=AsyncMock)
-    def test_upload_file_too_large(self, mock_save):
-        from fastapi import HTTPException
-        mock_save.side_effect = HTTPException(status_code=400, detail="File too large. Maximum size: 500MB")
+    @patch("app.api.videos.save_uploaded_file")
+    def test_upload_rejects_bad_mime(self, mock_save):
+        mock_save.side_effect = ValueError("Unsupported file type 'text/plain'")
 
         db = TestingSessionLocal()
         user = _create_user(db)
@@ -201,17 +241,14 @@ class TestUploadEndpoint:
         resp = client.post(
             "/api/videos/upload",
             headers=_auth_header(user.id),
-            files={"video": ("big.mp4", _fake_video_bytes(), "video/mp4")},
+            files={"file": ("notes.txt", _fake_video_bytes(), "text/plain")},
         )
         assert resp.status_code == 400
-        assert "File too large" in resp.json()["detail"]
+        assert "Unsupported" in resp.json()["detail"]
 
-    @patch("app.services.storage_service.save_video", new_callable=AsyncMock)
-    def test_upload_invalid_extension(self, mock_save):
-        from fastapi import HTTPException
-        mock_save.side_effect = HTTPException(
-            status_code=400, detail="File type '.txt' not allowed"
-        )
+    @patch("app.api.videos.save_uploaded_file")
+    def test_upload_rejects_too_large(self, mock_save):
+        mock_save.side_effect = ValueError("File exceeds maximum allowed size")
 
         db = TestingSessionLocal()
         user = _create_user(db)
@@ -220,172 +257,13 @@ class TestUploadEndpoint:
         resp = client.post(
             "/api/videos/upload",
             headers=_auth_header(user.id),
-            files={"video": ("notes.txt", _fake_video_bytes(), "text/plain")},
+            files={"file": ("big.mp4", _fake_video_bytes(), "video/mp4")},
         )
         assert resp.status_code == 400
-        assert "not allowed" in resp.json()["detail"]
+        assert "exceeds" in resp.json()["detail"]
 
 
-class TestFragmentEndpoint:
-    """POST /api/videos/{video_id}/fragment"""
-
-    def setup_method(self):
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-
-    def _seed_video(self) -> tuple:
-        """Create a user + video record, return (user, video_id)."""
-        db = TestingSessionLocal()
-        user = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            original_file_path="uploads/test/video.mp4",
-            status="pending",
-        )
-        db.add(video)
-        db.commit()
-        vid = video.id
-        uid = user.id
-        db.close()
-        return uid, vid
-
-    @patch("app.services.video_service.extract_fragment", new_callable=AsyncMock, return_value="uploads/test/video_fragment.mp4")
-    def test_fragment_success(self, mock_ff):
-        uid, vid = self._seed_video()
-        resp = client.post(
-            f"/api/videos/{vid}/fragment",
-            headers=_auth_header(uid),
-            json={"fragment_start": 5.0, "fragment_end": 20.0},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "processing"
-        assert data["fragment_file_path"] is not None
-        mock_ff.assert_called_once()
-
-    def test_fragment_end_before_start(self):
-        uid, vid = self._seed_video()
-        resp = client.post(
-            f"/api/videos/{vid}/fragment",
-            headers=_auth_header(uid),
-            json={"fragment_start": 20.0, "fragment_end": 5.0},
-        )
-        assert resp.status_code == 400
-        assert "greater than" in resp.json()["detail"]
-
-    def test_fragment_negative_times(self):
-        uid, vid = self._seed_video()
-        resp = client.post(
-            f"/api/videos/{vid}/fragment",
-            headers=_auth_header(uid),
-            json={"fragment_start": -1.0, "fragment_end": 5.0},
-        )
-        assert resp.status_code == 400
-
-    def test_fragment_video_not_found(self):
-        db = TestingSessionLocal()
-        user = _create_user(db)
-        db.close()
-
-        resp = client.post(
-            f"/api/videos/{uuid.uuid4()}/fragment",
-            headers=_auth_header(user.id),
-            json={"fragment_start": 1.0, "fragment_end": 10.0},
-        )
-        assert resp.status_code == 404
-
-    def test_fragment_requires_auth(self):
-        resp = client.post(
-            f"/api/videos/{uuid.uuid4()}/fragment",
-            json={"fragment_start": 1.0, "fragment_end": 10.0},
-        )
-        assert resp.status_code == 403
-
-
-class TestAnalyzeEndpoint:
-    """POST /api/videos/{video_id}/analyze — returns 202 (async via BackgroundTasks)"""
-
-    def setup_method(self):
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-
-    def _seed_video(self, with_fragment=False) -> tuple:
-        db = TestingSessionLocal()
-        user = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            original_file_path="uploads/test/video.mp4",
-            fragment_file_path="uploads/test/video_fragment.mp4" if with_fragment else None,
-            status="processing" if with_fragment else "pending",
-        )
-        db.add(video)
-        db.commit()
-        vid = video.id
-        uid = user.id
-        db.close()
-        return uid, vid
-
-    def test_analyze_returns_202_processing(self):
-        """Analyze endpoint returns 202 Accepted and sets status to processing."""
-        uid, vid = self._seed_video(with_fragment=True)
-        resp = client.post(
-            f"/api/videos/{vid}/analyze",
-            headers=_auth_header(uid),
-        )
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "processing"
-        assert data["id"] is not None
-
-    def test_analyze_picks_fragment_path(self):
-        """When fragment exists, background task should receive fragment path."""
-        uid, vid = self._seed_video(with_fragment=True)
-        resp = client.post(
-            f"/api/videos/{vid}/analyze",
-            headers=_auth_header(uid),
-        )
-        assert resp.status_code == 202
-
-    def test_analyze_picks_original_if_no_fragment(self):
-        """When no fragment, background task should receive original path."""
-        uid, vid = self._seed_video(with_fragment=False)
-        resp = client.post(
-            f"/api/videos/{vid}/analyze",
-            headers=_auth_header(uid),
-        )
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "processing"
-
-    def test_analyze_video_not_found(self):
-        db = TestingSessionLocal()
-        user = _create_user(db)
-        db.close()
-
-        resp = client.post(
-            f"/api/videos/{uuid.uuid4()}/analyze",
-            headers=_auth_header(user.id),
-        )
-        assert resp.status_code == 404
-
-    def test_analyze_requires_auth(self):
-        resp = client.post(f"/api/videos/{uuid.uuid4()}/analyze")
-        assert resp.status_code == 403
-
-    @patch("app.api.videos._run_analysis", new_callable=AsyncMock)
-    def test_background_task_is_scheduled(self, mock_run):
-        """Verify that _run_analysis is added as a background task."""
-        uid, vid = self._seed_video(with_fragment=True)
-        resp = client.post(
-            f"/api/videos/{vid}/analyze",
-            headers=_auth_header(uid),
-        )
-        assert resp.status_code == 202
-        # BackgroundTasks in TestClient are executed synchronously,
-        # so mock_run should have been called
-        mock_run.assert_called_once_with(vid, "uploads/test/video_fragment.mp4")
+# --- List Endpoint Tests ---
 
 
 class TestListVideosEndpoint:
@@ -409,39 +287,36 @@ class TestListVideosEndpoint:
         user = _create_user(db)
         other_user = _create_user(db)
 
-        # Create videos for both users
         for i in range(3):
-            db.add(VideoUpload(user_id=user.id, original_file_path=f"/v{i}.mp4", status="pending"))
-        db.add(VideoUpload(user_id=other_user.id, original_file_path="/other.mp4", status="pending"))
-        db.commit()
+            _seed_video(db, user.id, id=str(uuid.uuid4()))
+        _seed_video(db, other_user.id, id=str(uuid.uuid4()))
         uid = user.id
         db.close()
 
         resp = client.get("/api/videos", headers=_auth_header(uid))
         assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 3
+        assert len(resp.json()) == 3
 
     def test_list_pagination(self):
         db = TestingSessionLocal()
         user = _create_user(db)
         for i in range(15):
-            db.add(VideoUpload(user_id=user.id, original_file_path=f"/v{i}.mp4", status="pending"))
-        db.commit()
+            _seed_video(db, user.id, id=str(uuid.uuid4()))
         uid = user.id
         db.close()
 
-        # Page 1
         resp = client.get("/api/videos?page=1&per_page=10", headers=_auth_header(uid))
         assert len(resp.json()) == 10
 
-        # Page 2
         resp = client.get("/api/videos?page=2&per_page=10", headers=_auth_header(uid))
         assert len(resp.json()) == 5
 
     def test_list_requires_auth(self):
         resp = client.get("/api/videos")
         assert resp.status_code == 403
+
+
+# --- Get Video Endpoint Tests ---
 
 
 class TestGetVideoEndpoint:
@@ -454,25 +329,20 @@ class TestGetVideoEndpoint:
     def test_get_video_success(self):
         db = TestingSessionLocal()
         user = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            original_file_path="/uploads/test.mp4",
-            status="completed",
-            form_feedback="Great form",
-            grade_estimate="V4",
+        vid = _seed_video(
+            db, user.id,
+            processing_status="completed",
+            form_analysis=MOCK_GEMINI_ANALYSIS,
         )
-        db.add(video)
-        db.commit()
-        vid = video.id
         uid = user.id
         db.close()
 
         resp = client.get(f"/api/videos/{vid}", headers=_auth_header(uid))
         assert resp.status_code == 200
         data = resp.json()
-        assert data["form_feedback"] == "Great form"
-        assert data["grade_estimate"] == "V4"
+        assert data["processing_status"] == "completed"
+        assert data["form_analysis"]["technique_score"] == 7
+        assert data["form_analysis"]["overall_grade_estimate"] == "V5"
 
     def test_get_video_not_found(self):
         db = TestingSessionLocal()
@@ -486,19 +356,10 @@ class TestGetVideoEndpoint:
         db = TestingSessionLocal()
         user1 = _create_user(db)
         user2 = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user1.id,
-            original_file_path="/uploads/test.mp4",
-            status="pending",
-        )
-        db.add(video)
-        db.commit()
-        vid = video.id
+        vid = _seed_video(db, user1.id)
         uid2 = user2.id
         db.close()
 
-        # user2 tries to access user1's video → 404 (not revealed)
         resp = client.get(f"/api/videos/{vid}", headers=_auth_header(uid2))
         assert resp.status_code == 404
 
@@ -507,88 +368,76 @@ class TestGetVideoEndpoint:
         assert resp.status_code == 403
 
 
+# --- Delete Endpoint Tests ---
+
+
+class TestDeleteVideoEndpoint:
+    """DELETE /api/videos/{video_id}"""
+
+    def setup_method(self):
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+    def test_delete_success(self):
+        db = TestingSessionLocal()
+        user = _create_user(db)
+        vid = _seed_video(db, user.id)
+        uid = user.id
+        db.close()
+
+        resp = client.delete(f"/api/videos/{vid}", headers=_auth_header(uid))
+        assert resp.status_code == 204
+
+        # Verify it's gone
+        resp = client.get(f"/api/videos/{vid}", headers=_auth_header(uid))
+        assert resp.status_code == 404
+
+    def test_delete_not_found(self):
+        db = TestingSessionLocal()
+        user = _create_user(db)
+        db.close()
+
+        resp = client.delete(f"/api/videos/{uuid.uuid4()}", headers=_auth_header(user.id))
+        assert resp.status_code == 404
+
+    def test_delete_other_user_forbidden(self):
+        db = TestingSessionLocal()
+        user1 = _create_user(db)
+        user2 = _create_user(db)
+        vid = _seed_video(db, user1.id)
+        uid2 = user2.id
+        db.close()
+
+        resp = client.delete(f"/api/videos/{vid}", headers=_auth_header(uid2))
+        assert resp.status_code == 404
+
+    def test_delete_requires_auth(self):
+        resp = client.delete(f"/api/videos/{uuid.uuid4()}")
+        assert resp.status_code == 403
+
+
 # --- Storage Service Unit Tests ---
 
 
 class TestStorageService:
-    """Unit tests for storage_service functions."""
+    """Unit tests for save_uploaded_file."""
 
-    @pytest.mark.asyncio
-    async def test_save_video_rejects_bad_extension(self):
-        from app.services.storage_service import save_video
-        from fastapi import HTTPException
+    def test_rejects_bad_mime_type(self):
+        from app.services.storage_service import save_uploaded_file
 
-        file = MagicMock(spec=["filename", "read"])
-        file.filename = "document.pdf"
+        file = MagicMock()
+        file.content_type = "text/plain"
+        file.filename = "document.txt"
 
-        with pytest.raises(HTTPException) as exc_info:
-            await save_video(file, "user123")
-        assert exc_info.value.status_code == 400
-        assert "not allowed" in exc_info.value.detail
+        with pytest.raises(ValueError, match="Unsupported file type"):
+            save_uploaded_file(file)
 
-    def test_allowed_extensions(self):
-        from app.services.storage_service import ALLOWED_EXTENSIONS
-        assert ".mp4" in ALLOWED_EXTENSIONS
-        assert ".mov" in ALLOWED_EXTENSIONS
-        assert ".webm" in ALLOWED_EXTENSIONS
-        assert ".pdf" not in ALLOWED_EXTENSIONS
-
-
-# --- Fragment Validation Tests ---
-
-
-class TestFragmentValidation:
-    """Test fragment request edge cases."""
-
-    def test_fragment_start_equals_end(self):
-        """fragment_end must be strictly greater than fragment_start."""
-        db = TestingSessionLocal()
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-        user = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            original_file_path="/v.mp4",
-            status="pending",
-        )
-        db.add(video)
-        db.commit()
-        vid = video.id
-        uid = user.id
-        db.close()
-
-        resp = client.post(
-            f"/api/videos/{vid}/fragment",
-            headers=_auth_header(uid),
-            json={"fragment_start": 10.0, "fragment_end": 10.0},
-        )
-        assert resp.status_code == 400
-
-    def test_fragment_zero_end(self):
-        """fragment_end=0 should be rejected."""
-        db = TestingSessionLocal()
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-        user = _create_user(db)
-        video = VideoUpload(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            original_file_path="/v.mp4",
-            status="pending",
-        )
-        db.add(video)
-        db.commit()
-        vid = video.id
-        uid = user.id
-        db.close()
-
-        resp = client.post(
-            f"/api/videos/{vid}/fragment",
-            headers=_auth_header(uid),
-            json={"fragment_start": 0.0, "fragment_end": 0.0},
-        )
-        assert resp.status_code == 400
+    def test_allowed_mime_types(self):
+        from app.services.storage_service import ALLOWED_MIME_TYPES
+        assert "video/mp4" in ALLOWED_MIME_TYPES
+        assert "video/quicktime" in ALLOWED_MIME_TYPES
+        assert "video/webm" in ALLOWED_MIME_TYPES
+        assert "text/plain" not in ALLOWED_MIME_TYPES
 
 
 # --- Gemini Service Unit Tests ---
@@ -597,41 +446,52 @@ class TestFragmentValidation:
 class TestGeminiService:
     """Unit tests for gemini_service — Gemini File API pattern."""
 
-    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.os.path.exists", return_value=True)
+    @patch("app.services.gemini_service._configured", True)
     @patch("app.services.gemini_service.genai")
-    async def test_analyze_uses_file_api_with_wait(self, mock_genai):
-        """Verify: upload_file → poll state → single generate_content call."""
-        from app.services.gemini_service import analyze_climbing_form
+    def test_upload_video_to_gemini(self, mock_genai, mock_exists):
+        from app.services.gemini_service import upload_video_to_gemini
 
-        # Mock file that goes PROCESSING → ACTIVE
         mock_file = MagicMock()
         mock_file.state.name = "ACTIVE"
         mock_file.name = "files/abc123"
         mock_genai.upload_file.return_value = mock_file
 
-        # Mock model response
+        result = upload_video_to_gemini("/fake/video.mp4")
+
+        assert result == "files/abc123"
+        mock_genai.upload_file.assert_called_once_with(
+            path="/fake/video.mp4", mime_type="video/mp4"
+        )
+
+    @patch("app.services.gemini_service._configured", True)
+    @patch("app.services.gemini_service.genai")
+    def test_analyze_climbing_form(self, mock_genai):
+        from app.services.gemini_service import analyze_climbing_form
+
+        mock_file = MagicMock()
+        mock_genai.get_file.return_value = mock_file
+
         mock_response = MagicMock()
-        mock_response.text = json.dumps(MOCK_GEMINI_RESULT)
+        mock_response.text = json.dumps(MOCK_GEMINI_ANALYSIS)
         mock_model = MagicMock()
         mock_model.generate_content.return_value = mock_response
         mock_genai.GenerativeModel.return_value = mock_model
 
-        result = await analyze_climbing_form("/fake/video.mp4")
+        result = analyze_climbing_form("files/abc123")
 
-        mock_genai.upload_file.assert_called_once_with(path="/fake/video.mp4")
+        assert result["technique_score"] == 7
+        assert result["overall_grade_estimate"] == "V5"
+        mock_genai.get_file.assert_called_once_with("files/abc123")
         mock_model.generate_content.assert_called_once()
-        assert result["form_feedback"] == MOCK_GEMINI_RESULT["form_feedback"]
-        assert result["grade_estimate"] == "V5"
-        assert len(result["key_weaknesses"]) == 3
 
-    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.os.path.exists", return_value=True)
+    @patch("app.services.gemini_service._configured", True)
     @patch("app.services.gemini_service.time.sleep")
     @patch("app.services.gemini_service.genai")
-    async def test_analyze_waits_for_processing(self, mock_genai, mock_sleep):
-        """Verify polling loop waits while state is PROCESSING."""
-        from app.services.gemini_service import analyze_climbing_form
+    def test_upload_waits_for_processing(self, mock_genai, mock_sleep, mock_exists):
+        from app.services.gemini_service import upload_video_to_gemini
 
-        # First call: PROCESSING, second call (via get_file): ACTIVE
         processing_file = MagicMock()
         processing_file.state.name = "PROCESSING"
         processing_file.name = "files/abc123"
@@ -643,31 +503,109 @@ class TestGeminiService:
         mock_genai.upload_file.return_value = processing_file
         mock_genai.get_file.return_value = active_file
 
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(MOCK_GEMINI_RESULT)
-        mock_model = MagicMock()
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        result = upload_video_to_gemini("/fake/video.mp4")
 
-        result = await analyze_climbing_form("/fake/video.mp4")
-
-        mock_genai.get_file.assert_called_once_with("files/abc123")
+        assert result == "files/abc123"
+        mock_genai.get_file.assert_called_with("files/abc123")
         mock_sleep.assert_called()
-        assert result["form_feedback"] == MOCK_GEMINI_RESULT["form_feedback"]
 
-    @pytest.mark.asyncio
+    @patch("app.services.gemini_service.os.path.exists", return_value=True)
+    @patch("app.services.gemini_service._configured", True)
     @patch("app.services.gemini_service.genai")
-    async def test_analyze_raises_on_failed_processing(self, mock_genai):
-        """Verify RuntimeError if Gemini file processing fails."""
-        from app.services.gemini_service import analyze_climbing_form
+    def test_upload_raises_on_failed_state(self, mock_genai, mock_exists):
+        from app.services.gemini_service import upload_video_to_gemini
 
         mock_file = MagicMock()
         mock_file.state.name = "FAILED"
         mock_file.name = "files/abc123"
         mock_genai.upload_file.return_value = mock_file
 
-        with pytest.raises(RuntimeError, match="processing failed"):
-            await analyze_climbing_form("/fake/video.mp4")
+        with pytest.raises(RuntimeError, match="unexpected state"):
+            upload_video_to_gemini("/fake/video.mp4")
+
+    @patch("app.services.gemini_service._configured", True)
+    @patch("app.services.gemini_service.genai")
+    def test_analyze_raises_on_bad_json(self, mock_genai):
+        from app.services.gemini_service import analyze_climbing_form
+
+        mock_file = MagicMock()
+        mock_genai.get_file.return_value = mock_file
+
+        mock_response = MagicMock()
+        mock_response.text = "not valid json"
+        mock_model = MagicMock()
+        mock_model.generate_content.return_value = mock_response
+        mock_genai.GenerativeModel.return_value = mock_model
+
+        with pytest.raises(RuntimeError, match="non-JSON"):
+            analyze_climbing_form("files/abc123")
+
+    def test_ensure_configured_raises_without_key(self):
+        from app.services.gemini_service import _ensure_configured
+        import app.services.gemini_service as gs
+
+        original = gs._configured
+        gs._configured = False
+        try:
+            with patch.dict(os.environ, {"GEMINI_API_KEY": ""}, clear=False):
+                with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+                    _ensure_configured()
+        finally:
+            gs._configured = original
+
+
+# --- Background Analysis Tests ---
+
+
+class TestBackgroundAnalysis:
+    """Test _background_analyze function."""
+
+    def setup_method(self):
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+    @patch("app.api.videos.analyze_climbing_form")
+    @patch("app.api.videos.upload_video_to_gemini")
+    @patch("app.api.videos.SessionLocal")
+    def test_background_analyze_success(self, mock_session_cls, mock_upload, mock_analyze):
+        from app.api.videos import _background_analyze
+
+        # Set up DB mock
+        db = TestingSessionLocal()
+        user = _create_user(db)
+        vid = _seed_video(db, user.id)
+
+        mock_session_cls.return_value = db
+        mock_upload.return_value = "files/gemini-123"
+        mock_analyze.return_value = MOCK_GEMINI_ANALYSIS
+
+        _background_analyze(vid, "/uploads/test.mp4")
+
+        # Verify the video was updated
+        video = db.query(VideoUpload).filter(VideoUpload.id == vid).first()
+        assert video.processing_status == "completed"
+        assert video.gemini_file_id == "files/gemini-123"
+        assert video.form_analysis == MOCK_GEMINI_ANALYSIS
+        assert video.completed_at is not None
+        db.close()
+
+    @patch("app.api.videos.upload_video_to_gemini")
+    @patch("app.api.videos.SessionLocal")
+    def test_background_analyze_failure(self, mock_session_cls, mock_upload):
+        from app.api.videos import _background_analyze
+
+        db = TestingSessionLocal()
+        user = _create_user(db)
+        vid = _seed_video(db, user.id)
+
+        mock_session_cls.return_value = db
+        mock_upload.side_effect = RuntimeError("Gemini upload failed")
+
+        _background_analyze(vid, "/uploads/test.mp4")
+
+        video = db.query(VideoUpload).filter(VideoUpload.id == vid).first()
+        assert video.processing_status == "failed"
+        db.close()
 
 
 if __name__ == "__main__":

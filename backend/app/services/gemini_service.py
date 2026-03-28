@@ -12,11 +12,22 @@ import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini with API key from environment
-_api_key = os.getenv("GEMINI_API_KEY")
-if not _api_key:
-    raise EnvironmentError("GEMINI_API_KEY environment variable is not set.")
-genai.configure(api_key=_api_key)
+_configured = False
+
+
+def _ensure_configured():
+    """Configure Gemini SDK on first use (not at import time)."""
+    global _configured
+    if _configured:
+        return
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY environment variable is not set. "
+            "Add it to backend/.env to enable video analysis."
+        )
+    genai.configure(api_key=api_key)
+    _configured = True
 
 MODEL_NAME = "gemini-2.0-flash"
 
@@ -65,6 +76,8 @@ def upload_video_to_gemini(file_path: str) -> str:
         FileNotFoundError: If the file does not exist at the given path.
         RuntimeError: If the upload fails or the file never reaches ACTIVE state.
     """
+    _ensure_configured()
+
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Video file not found: {file_path}")
 
@@ -122,6 +135,8 @@ def analyze_climbing_form(gemini_file_id: str) -> dict[str, Any]:
         RuntimeError: If the Gemini API call fails or returns unparseable output.
     """
     import json
+
+    _ensure_configured()
 
     logger.info("Requesting climbing analysis for file: %s", gemini_file_id)
 
