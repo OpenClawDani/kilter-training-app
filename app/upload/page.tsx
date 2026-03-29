@@ -12,7 +12,7 @@ const MAX_SIZE = 500 * 1024 * 1024; // 500MB
 function UploadContent() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [notes, setNotes] = useState('');
+  const [title, setTitle] = useState('');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -57,7 +57,7 @@ function UploadContent() {
     }, 300);
 
     try {
-      const video = await uploadVideo(file, notes || undefined);
+      const video = await uploadVideo(file, title || undefined);
       setProgress(100);
       clearInterval(progressInterval);
       setTimeout(() => router.push(`/videos/${video.id}`), 500);
@@ -102,7 +102,7 @@ function UploadContent() {
 
           {file ? (
             <div>
-              <div className="text-4xl mb-3">✅</div>
+              <div className="text-4xl mb-3">&#9989;</div>
               <p className="text-white font-semibold text-lg">{file.name}</p>
               <p className="text-zinc-400 text-sm mt-1">
                 {(file.size / 1024 / 1024).toFixed(1)} MB
@@ -132,15 +132,15 @@ function UploadContent() {
           )}
         </div>
 
-        {/* Notes */}
+        {/* Title */}
         {file && !uploading && (
           <div className="mt-4">
-            <label className="block text-sm text-zinc-400 mb-1.5">Note (opzionale)</label>
+            <label className="block text-sm text-zinc-400 mb-1.5">Titolo (opzionale)</label>
             <input
               type="text"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Es: Sessione slab V4, focus su footwork"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Es: Sessione slab V4, Red problem gym"
               className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:border-[#FF6B35] transition-colors"
             />
           </div>

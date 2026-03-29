@@ -4,14 +4,158 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
-import { getVideo, analyzeVideo, Video, ApiError } from '@/app/lib/api';
+import { getVideo, Video, FormAnalysis, ApiError } from '@/app/lib/api';
+
+function ScoreBar({ label, score }: { label: string; score: number }) {
+  return (
+    <div>
+      <div className="flex justify-between text-sm mb-1">
+        <span className="text-zinc-400">{label}</span>
+        <span className="text-white font-semibold">{score}/10</span>
+      </div>
+      <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-[#FF6B35] rounded-full transition-all"
+          style={{ width: `${score * 10}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AnalysisResults({ analysis }: { analysis: FormAnalysis }) {
+  return (
+    <div className="space-y-4">
+      {/* Grade badge */}
+      {analysis.overall_grade_estimate && (
+        <div className="bg-zinc-900 border border-[#FF6B35]/40 rounded-2xl p-6 text-center">
+          <p className="text-sm text-zinc-400 mb-2">Grado stimato</p>
+          <span className="inline-block px-6 py-3 bg-[#FF6B35] text-white text-3xl font-black rounded-xl">
+            {analysis.overall_grade_estimate}
+          </span>
+        </div>
+      )}
+
+      {/* Summary */}
+      {analysis.summary && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
+            Valutazione
+          </h3>
+          <p className="text-zinc-200 leading-relaxed">{analysis.summary}</p>
+        </div>
+      )}
+
+      {/* Scores */}
+      {(analysis.technique_score || analysis.body_tension_score || analysis.footwork_score) && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-4">
+            Punteggi
+          </h3>
+          <div className="space-y-3">
+            {analysis.technique_score && <ScoreBar label="Tecnica" score={analysis.technique_score} />}
+            {analysis.body_tension_score && <ScoreBar label="Tensione corporea" score={analysis.body_tension_score} />}
+            {analysis.footwork_score && <ScoreBar label="Footwork" score={analysis.footwork_score} />}
+          </div>
+        </div>
+      )}
+
+      {/* Strengths */}
+      {analysis.strengths && analysis.strengths.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-green-400 uppercase tracking-wide mb-3">
+            Punti di forza
+          </h3>
+          <ul className="space-y-2">
+            {analysis.strengths.map((s, i) => (
+              <li key={i} className="flex items-start gap-3 text-zinc-300">
+                <span className="text-green-400 mt-0.5">&#10003;</span>
+                <span>{s}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Weaknesses */}
+      {analysis.weaknesses && analysis.weaknesses.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-yellow-400 uppercase tracking-wide mb-3">
+            Da migliorare
+          </h3>
+          <ul className="space-y-2">
+            {analysis.weaknesses.map((w, i) => (
+              <li key={i} className="flex items-start gap-3 text-zinc-300">
+                <span className="text-yellow-400 mt-0.5">&#9888;&#65039;</span>
+                <span>{w}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Specific feedback */}
+      {analysis.specific_feedback && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
+            Feedback dettagliato
+          </h3>
+          <div className="space-y-4">
+            {Object.entries(analysis.specific_feedback).map(([key, value]) => {
+              if (!value) return null;
+              const labels: Record<string, string> = {
+                footwork: 'Footwork',
+                body_positioning: 'Posizione del corpo',
+                arm_usage: 'Uso delle braccia',
+                breathing_pacing: 'Ritmo e respirazione',
+                route_reading: 'Lettura del percorso',
+              };
+              return (
+                <div key={key}>
+                  <p className="text-sm font-medium text-zinc-400 mb-1">{labels[key] || key}</p>
+                  <p className="text-zinc-200 text-sm leading-relaxed">{value}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Drills */}
+      {analysis.drills_recommended && analysis.drills_recommended.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
+            Esercizi consigliati
+          </h3>
+          <ul className="space-y-2">
+            {analysis.drills_recommended.map((drill, i) => (
+              <li key={i} className="flex items-start gap-3 text-zinc-300">
+                <span className="text-[#FF6B35]">&#8226;</span>
+                <span>{drill}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Next steps */}
+      {analysis.next_steps && (
+        <div className="bg-[#FF6B35]/10 border border-[#FF6B35]/30 rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-2">
+            Prossimo passo
+          </h3>
+          <p className="text-zinc-200 leading-relaxed">{analysis.next_steps}</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function VideoContent() {
   const params = useParams();
   const videoId = params.id as string;
   const [video, setVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState(true);
-  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
 
   const fetchVideo = useCallback(async () => {
@@ -33,30 +177,17 @@ function VideoContent() {
 
   // Auto-polling while processing
   useEffect(() => {
-    if (!video || video.status !== 'processing') return;
+    if (!video || video.processing_status !== 'processing') return;
 
     const interval = setInterval(async () => {
       const updated = await fetchVideo();
-      if (updated && updated.status !== 'processing') {
+      if (updated && updated.processing_status !== 'processing') {
         clearInterval(interval);
       }
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [video?.status, fetchVideo]);
-
-  const handleAnalyze = async () => {
-    setAnalyzing(true);
-    setError('');
-    try {
-      const updated = await analyzeVideo(videoId);
-      setVideo(updated);
-    } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-    } finally {
-      setAnalyzing(false);
-    }
-  };
+  }, [video?.processing_status, fetchVideo]);
 
   if (loading) {
     return (
@@ -94,7 +225,7 @@ function VideoContent() {
         {/* File info */}
         <div className="mb-6">
           <h1 className="text-xl font-bold text-white truncate">
-            {video.original_file_path?.split('/').pop() || 'Video'}
+            {video.title || video.filename || 'Video'}
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
             {new Date(video.created_at).toLocaleDateString('it-IT', {
@@ -104,6 +235,9 @@ function VideoContent() {
               hour: '2-digit',
               minute: '2-digit',
             })}
+            {video.grade_attempted && (
+              <span className="ml-3 text-zinc-400">Grado tentato: {video.grade_attempted}</span>
+            )}
           </p>
         </div>
 
@@ -114,30 +248,16 @@ function VideoContent() {
         )}
 
         {/* PENDING */}
-        {video.status === 'pending' && (
+        {video.processing_status === 'pending' && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center">
             <div className="text-5xl mb-4">🎬</div>
-            <h2 className="text-lg font-semibold text-white mb-2">Video caricato</h2>
-            <p className="text-zinc-400 mb-6">Clicca per avviare l&apos;analisi con Gemini AI</p>
-            <button
-              onClick={handleAnalyze}
-              disabled={analyzing}
-              className="px-8 py-3 bg-[#FF6B35] hover:bg-[#ff7d4d] text-white font-bold rounded-xl transition-colors disabled:opacity-50"
-            >
-              {analyzing ? (
-                <span className="flex items-center gap-2">
-                  <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                  Avvio analisi...
-                </span>
-              ) : (
-                'Analizza ora'
-              )}
-            </button>
+            <h2 className="text-lg font-semibold text-white mb-2">Video in coda</h2>
+            <p className="text-zinc-400">L&apos;analisi partirà a breve...</p>
           </div>
         )}
 
         {/* PROCESSING */}
-        {video.status === 'processing' && (
+        {video.processing_status === 'processing' && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center">
             <div className="relative w-16 h-16 mx-auto mb-6">
               <div className="absolute inset-0 border-4 border-[#FF6B35]/20 rounded-full" />
@@ -154,108 +274,25 @@ function VideoContent() {
         )}
 
         {/* FAILED */}
-        {video.status === 'failed' && (
+        {video.processing_status === 'failed' && (
           <div className="bg-zinc-900 border border-red-500/30 rounded-2xl p-8 text-center">
-            <div className="text-5xl mb-4">❌</div>
+            <div className="text-5xl mb-4">&#10060;</div>
             <h2 className="text-lg font-semibold text-white mb-2">Analisi fallita</h2>
             <p className="text-zinc-400 mb-6">
               Si è verificato un errore durante l&apos;analisi del video.
             </p>
-            <button
-              onClick={handleAnalyze}
-              disabled={analyzing}
-              className="px-8 py-3 bg-[#FF6B35] hover:bg-[#ff7d4d] text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+            <Link
+              href="/upload"
+              className="px-8 py-3 bg-[#FF6B35] hover:bg-[#ff7d4d] text-white font-bold rounded-xl transition-colors inline-block"
             >
-              {analyzing ? 'Riprovo...' : 'Riprova'}
-            </button>
+              Carica un nuovo video
+            </Link>
           </div>
         )}
 
         {/* COMPLETED */}
-        {video.status === 'completed' && (
-          <div className="space-y-4">
-            {/* Grade badge */}
-            {video.grade_estimate && (
-              <div className="bg-zinc-900 border border-[#FF6B35]/40 rounded-2xl p-6 text-center">
-                <p className="text-sm text-zinc-400 mb-2">Grado stimato</p>
-                <span className="inline-block px-6 py-3 bg-[#FF6B35] text-white text-3xl font-black rounded-xl">
-                  {video.grade_estimate}
-                </span>
-              </div>
-            )}
-
-            {/* Form feedback */}
-            {video.form_feedback && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
-                  Feedback sulla tecnica
-                </h3>
-                <p className="text-zinc-200 leading-relaxed whitespace-pre-wrap">
-                  {video.form_feedback}
-                </p>
-              </div>
-            )}
-
-            {/* Body position */}
-            {video.body_position && Object.keys(video.body_position).length > 0 && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
-                  Posizione del corpo
-                </h3>
-                <div className="space-y-3">
-                  {Object.entries(video.body_position).map(([key, value]) => (
-                    <div key={key} className="flex justify-between items-center">
-                      <span className="text-zinc-400 capitalize">{key.replace(/_/g, ' ')}</span>
-                      <span className="text-white font-medium">{String(value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Key weaknesses */}
-            {video.key_weaknesses && video.key_weaknesses.length > 0 && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
-                  Punti deboli
-                </h3>
-                <ul className="space-y-2">
-                  {video.key_weaknesses.map((weakness, i) => (
-                    <li key={i} className="flex items-start gap-3 text-zinc-300">
-                      <span className="text-yellow-500 mt-0.5">&#9888;&#65039;</span>
-                      <span>{weakness}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Holds analysis */}
-            {video.holds_analysis && video.holds_analysis.length > 0 && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-[#FF6B35] uppercase tracking-wide mb-3">
-                  Analisi prese
-                </h3>
-                <div className="space-y-2">
-                  {video.holds_analysis.map((hold, i) => (
-                    <div key={i} className="p-3 bg-zinc-800/50 rounded-xl text-zinc-300 text-sm">
-                      {typeof hold === 'string' ? hold : JSON.stringify(hold)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Notes */}
-            {video.notes && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
-                <h3 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-2">
-                  Note
-                </h3>
-                <p className="text-zinc-400">{video.notes}</p>
-              </div>
-            )}
-          </div>
+        {video.processing_status === 'completed' && video.form_analysis && (
+          <AnalysisResults analysis={video.form_analysis} />
         )}
       </main>
     </div>

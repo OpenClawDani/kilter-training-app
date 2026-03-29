@@ -62,6 +62,11 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     throw new ApiError(response.status, data.detail || 'Errore del server');
   }
 
+  // 204 No Content (e.g. DELETE)
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json();
 }
 
@@ -94,20 +99,39 @@ export interface User {
   updated_at: string;
 }
 
+export interface SpecificFeedback {
+  footwork?: string;
+  body_positioning?: string;
+  arm_usage?: string;
+  breathing_pacing?: string;
+  route_reading?: string;
+}
+
+export interface FormAnalysis {
+  overall_grade_estimate?: string;
+  technique_score?: number;
+  body_tension_score?: number;
+  footwork_score?: number;
+  summary?: string;
+  strengths?: string[];
+  weaknesses?: string[];
+  specific_feedback?: SpecificFeedback;
+  drills_recommended?: string[];
+  next_steps?: string;
+  [key: string]: unknown; // forward-compat with prompt changes
+}
+
 export interface Video {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  original_file_path: string;
-  fragment_file_path: string | null;
-  form_feedback: string | null;
-  grade_estimate: string | null;
-  body_position: Record<string, unknown> | null;
-  holds_analysis: unknown[] | null;
-  key_weaknesses: string[] | null;
-  notes: string | null;
-  duration: number | null;
+  user_id: string;
+  filename: string | null;
   file_size: number | null;
+  processing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  form_analysis: FormAnalysis | null;
   created_at: string;
+  completed_at: string | null;
+  title: string | null;
+  grade_attempted: string | null;
 }
 
 // --- Auth API ---
@@ -134,20 +158,15 @@ export async function getMe(): Promise<User> {
 
 // --- Video API ---
 
-export async function uploadVideo(file: File, notes?: string): Promise<Video> {
+export async function uploadVideo(file: File, title?: string, gradeAttempted?: string): Promise<Video> {
   const formData = new FormData();
-  formData.append('video', file);
-  if (notes) formData.append('notes', notes);
+  formData.append('file', file);
+  if (title) formData.append('title', title);
+  if (gradeAttempted) formData.append('grade_attempted', gradeAttempted);
 
   return apiFetch<Video>('/api/videos/upload', {
     method: 'POST',
     body: formData,
-  });
-}
-
-export async function analyzeVideo(videoId: string): Promise<Video> {
-  return apiFetch<Video>(`/api/videos/${videoId}/analyze`, {
-    method: 'POST',
   });
 }
 
@@ -157,4 +176,8 @@ export async function getVideo(videoId: string): Promise<Video> {
 
 export async function getVideos(page = 1, perPage = 20): Promise<Video[]> {
   return apiFetch<Video[]>(`/api/videos?page=${page}&per_page=${perPage}`);
+}
+
+export async function deleteVideo(videoId: string): Promise<void> {
+  return apiFetch<void>(`/api/videos/${videoId}`, { method: 'DELETE' });
 }

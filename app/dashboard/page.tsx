@@ -6,9 +6,9 @@ import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
 import { getVideos, clearToken, Video } from '@/app/lib/api';
 
-const STATUS_BADGE: Record<Video['status'], { bg: string; label: string }> = {
-  pending:    { bg: 'bg-zinc-600',   label: 'In attesa' },
-  processing: { bg: 'bg-yellow-500', label: 'Analisi...' },
+const STATUS_BADGE: Record<Video['processing_status'], { bg: string; label: string }> = {
+  pending:    { bg: 'bg-yellow-500', label: 'In attesa' },
+  processing: { bg: 'bg-blue-500',   label: 'Analisi...' },
   completed:  { bg: 'bg-green-500',  label: 'Completato' },
   failed:     { bg: 'bg-red-500',    label: 'Errore' },
 };
@@ -92,7 +92,7 @@ function DashboardContent() {
         ) : (
           <div className="space-y-3">
             {videos.map((video) => {
-              const badge = STATUS_BADGE[video.status];
+              const badge = STATUS_BADGE[video.processing_status];
               return (
                 <Link
                   key={video.id}
@@ -103,7 +103,7 @@ function DashboardContent() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-3 mb-1">
                         <span className="text-white font-medium truncate">
-                          {video.original_file_path?.split('/').pop() || 'Video'}
+                          {video.title || video.filename || 'Video'}
                         </span>
                         <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold text-white ${badge.bg}`}>
                           {badge.label}
@@ -114,9 +114,9 @@ function DashboardContent() {
                         {video.file_size && <span>{formatSize(video.file_size)}</span>}
                       </div>
                     </div>
-                    {video.grade_estimate && (
+                    {video.form_analysis?.overall_grade_estimate && (
                       <div className="ml-4 px-3 py-1.5 bg-[#FF6B35]/20 border border-[#FF6B35]/40 rounded-xl">
-                        <span className="text-[#FF6B35] font-bold text-lg">{video.grade_estimate}</span>
+                        <span className="text-[#FF6B35] font-bold text-lg">{video.form_analysis.overall_grade_estimate}</span>
                       </div>
                     )}
                     <svg className="ml-3 w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
