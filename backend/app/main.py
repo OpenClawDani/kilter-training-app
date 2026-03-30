@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
@@ -13,15 +15,8 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS — permissive in dev, restricted in prod
-origins = (
-    ["*"]
-    if settings.environment == "development"
-    else [
-        "https://kilter-training-app.vercel.app",
-        "https://*.vercel.app",
-    ]
-)
+# CORS — read from ALLOWED_ORIGINS env var, fallback to localhost for dev
+origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
 app.add_middleware(
     CORSMiddleware,

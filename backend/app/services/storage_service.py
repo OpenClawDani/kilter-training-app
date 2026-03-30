@@ -11,10 +11,10 @@ from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
-# Resolve uploads directory relative to the project root.
-# Override with UPLOADS_DIR env var if needed.
+# Resolve uploads directory from UPLOAD_DIR env var (same as Railway config).
+# Falls back to <project_root>/uploads for local dev.
 _DEFAULT_UPLOADS_DIR = Path(__file__).resolve().parents[3] / "uploads"
-UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", str(_DEFAULT_UPLOADS_DIR)))
+UPLOADS_DIR = Path(os.getenv("UPLOAD_DIR", str(_DEFAULT_UPLOADS_DIR)))
 
 ALLOWED_MIME_TYPES = {
     "video/mp4",
